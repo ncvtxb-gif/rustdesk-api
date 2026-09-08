@@ -49,6 +49,7 @@ type OauthCacheItem struct {
 	Email      string `json:"email"`
 	Verifier   string `json:"verifier"` // used for oauth pkce
 	Nonce      string `json:"nonce"`
+	Enterprise bool   `json:"enterprise"`
 }
 
 func (oci *OauthCacheItem) ToOauthUser() *model.OauthUser {

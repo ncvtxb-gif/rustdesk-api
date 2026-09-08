@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/lejianwen/rustdesk-api/v2/config"
 	"github.com/lejianwen/rustdesk-api/v2/global"
 	"github.com/lejianwen/rustdesk-api/v2/http/request/api"
 	"github.com/lejianwen/rustdesk-api/v2/http/response"
@@ -27,7 +28,7 @@ type Login struct {
 // @Failure 500 {object} response.ErrorResponse
 // @Router /login [post]
 func (l *Login) Login(c *gin.Context) {
-	if global.Config.App.DisablePwdLogin {
+	if passwordLoginDisabled(global.Config.App.DisablePwdLogin, &global.Config.DeviceIdentity) {
 		response.Error(c, response.TranslateMsg(c, "PwdLoginDisabled"))
 		return
 	}
@@ -91,6 +92,10 @@ func (l *Login) Login(c *gin.Context) {
 	})
 }
 
+func passwordLoginDisabled(disabled bool, cfg *config.DeviceIdentity) bool {
+	return disabled || cfg.Enabled
+}
+
 // LoginOptions
 // @Tags 登录
 // @Summary 登录选项
@@ -102,24 +107,28 @@ func (l *Login) Login(c *gin.Context) {
 // @Router /login-options [get]
 func (l *Login) LoginOptions(c *gin.Context) {
 	ops := service.AllService.OauthService.GetOauthProviders()
-	if global.Config.App.WebSso {
+	res := buildLoginOptions(ops, global.Config.App.WebSso, &global.Config.DeviceIdentity)
+	c.JSON(http.StatusOK, res)
+}
+
+func buildLoginOptions(ops []string, webSso bool, cfg *config.DeviceIdentity) []string {
+	if cfg.Enabled {
+		ops = []string{cfg.FeishuOidcOp}
+		webSso = false
+	} else if webSso {
 		ops = append(ops, model.OauthTypeWebauth)
 	}
 	var oidcItems []map[string]string
 	for _, v := range ops {
 		oidcItems = append(oidcItems, map[string]string{"name": v})
 	}
-	common, err := json.Marshal(oidcItems)
-	if err != nil {
-		response.Error(c, response.TranslateMsg(c, "SystemError")+err.Error())
-		return
-	}
+	common, _ := json.Marshal(oidcItems)
 	var res []string
 	res = append(res, "common-oidc/"+string(common))
 	for _, v := range ops {
 		res = append(res, "oidc/"+v)
 	}
-	c.JSON(http.StatusOK, res)
+	return res
 }
 
 // Logout

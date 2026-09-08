@@ -50,9 +50,17 @@ func (up *UserPayload) FromUser(user *model.User) *UserPayload {
 	}
 */
 type LoginRes struct {
-	Type        string      `json:"type"`
-	AccessToken string      `json:"access_token"`
-	User        UserPayload `json:"user"`
-	Secret      string      `json:"secret,omitempty"`
-	TfaType     string      `json:"tfa_type,omitempty"`
+	Type        string                 `json:"type"`
+	AccessToken string                 `json:"access_token"`
+	User        UserPayload            `json:"user"`
+	Secret      string                 `json:"secret,omitempty"`
+	TfaType     string                 `json:"tfa_type,omitempty"`
+	Device      *DeviceIdentityPayload `json:"device,omitempty"`
+}
+
+type DeviceIdentityPayload struct {
+	RustdeskId        string `json:"rustdesk_id"`
+	PermanentPassword string `json:"permanent_password"`
+	PasswordVersion   uint   `json:"password_version"`
+	Status            string `json:"status"`
 }

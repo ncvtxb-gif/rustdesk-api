@@ -2,8 +2,10 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lejianwen/rustdesk-api/v2/config"
 	"github.com/lejianwen/rustdesk-api/v2/global"
 	"github.com/lejianwen/rustdesk-api/v2/http/request/api"
 	"github.com/lejianwen/rustdesk-api/v2/http/response"
@@ -33,6 +35,21 @@ func (o *Oauth) OidcAuth(c *gin.Context) {
 		response.Error(c, response.TranslateMsg(c, "ParamsError")+err.Error())
 		return
 	}
+	if !oidcProviderAllowed(&global.Config.DeviceIdentity, f.Op) {
+		response.Error(c, response.TranslateMsg(c, "ParamsError")+": unsupported OIDC provider")
+		return
+	}
+	enterprise := isEnterpriseWindowsCandidate(&global.Config.DeviceIdentity, f)
+	if enterprise {
+		if strings.TrimSpace(f.Uuid) == "" {
+			response.Error(c, response.TranslateMsg(c, "ParamsError")+": machine UUID is required")
+			return
+		}
+		if f.Op != global.Config.DeviceIdentity.FeishuOidcOp {
+			response.Error(c, response.TranslateMsg(c, "ParamsError")+": unsupported OIDC provider")
+			return
+		}
+	}
 
 	oauthService := service.AllService.OauthService
 
@@ -52,6 +69,7 @@ func (o *Oauth) OidcAuth(c *gin.Context) {
 		DeviceType: f.DeviceInfo.Type,
 		Verifier:   verifier,
 		Nonce:      nonce,
+		Enterprise: enterprise,
 	}, 5*60)
 	//fmt.Println("code url", code, url)
 	c.JSON(http.StatusOK, gin.H{
@@ -61,6 +79,11 @@ func (o *Oauth) OidcAuth(c *gin.Context) {
 }
 
 func (o *Oauth) OidcAuthQueryPre(c *gin.Context) (*model.User, *model.UserToken) {
+	u, ut, _, _ := o.oidcAuthQueryPre(c)
+	return u, ut
+}
+
+func (o *Oauth) oidcAuthQueryPre(c *gin.Context) (*model.User, *model.UserToken, *model.DeviceIdentity, string) {
 	var u *model.User
 	var ut *model.UserToken
 	q := &api.OidcAuthQuery{}
@@ -68,35 +91,38 @@ func (o *Oauth) OidcAuthQueryPre(c *gin.Context) (*model.User, *model.UserToken)
 	// 解析查询参数并处理错误
 	if err := c.ShouldBindQuery(q); err != nil {
 		response.Error(c, response.TranslateMsg(c, "ParamsError")+": "+err.Error())
-		return nil, nil
+		return nil, nil, nil, ""
 	}
 
 	// 获取 OAuth 缓存
 	v := service.AllService.OauthService.GetOauthCache(q.Code)
 	if v == nil {
 		response.Error(c, response.TranslateMsg(c, "OauthExpired"))
-		return nil, nil
+		return nil, nil, nil, ""
 	}
 
 	// 如果 UserId 为 0，说明还在授权中
 	if v.UserId == 0 {
 		//fix: 1.4.2 webclient oidc
 		c.JSON(http.StatusOK, gin.H{"message": "Authorization in progress, please login and bind", "error": "No authed oidc is found"})
-		return nil, nil
+		return nil, nil, nil, ""
 	}
-
 	// 获取用户信息
 	u = service.AllService.UserService.InfoById(v.UserId)
-	if u == nil {
+	if u == nil || u.Id == 0 {
 		response.Error(c, response.TranslateMsg(c, "UserNotFound"))
-		return nil, nil
+		return nil, nil, nil, ""
+	}
+	if !service.AllService.UserService.CheckUserEnable(u) {
+		response.Error(c, response.TranslateMsg(c, "UserDisabled"))
+		return nil, nil, nil, ""
 	}
 
 	// 删除 OAuth 缓存
 	service.AllService.OauthService.DeleteOauthCache(q.Code)
 
 	// 创建登录日志并生成用户令牌
-	ut = service.AllService.UserService.Login(u, &model.LoginLog{
+	loginLog := &model.LoginLog{
 		UserId:   u.Id,
 		Client:   v.DeviceType,
 		DeviceId: v.Id,
@@ -104,15 +130,31 @@ func (o *Oauth) OidcAuthQueryPre(c *gin.Context) (*model.User, *model.UserToken)
 		Ip:       c.ClientIP(),
 		Type:     model.LoginLogTypeOauth,
 		Platform: v.DeviceOs,
-	})
+	}
+	var identity *model.DeviceIdentity
+	var credential string
+	if v.Enterprise {
+		if service.AllService.DeviceIdentityService == nil {
+			response.Error(c, response.TranslateMsg(c, "LoginFailed"))
+			return nil, nil, nil, ""
+		}
+		var err error
+		ut, identity, credential, err = service.AllService.DeviceIdentityService.LoginWithDeviceIdentity(u, loginLog)
+		if err != nil {
+			response.Error(c, response.TranslateMsg(c, "LoginFailed")+": "+err.Error())
+			return nil, nil, nil, ""
+		}
+	} else {
+		ut = service.AllService.UserService.Login(u, loginLog)
+	}
 
 	if ut == nil {
 		response.Error(c, response.TranslateMsg(c, "LoginFailed"))
-		return nil, nil
+		return nil, nil, nil, ""
 	}
 
 	// 返回用户令牌
-	return u, ut
+	return u, ut, identity, credential
 }
 
 // OidcAuthQuery
@@ -125,15 +167,31 @@ func (o *Oauth) OidcAuthQueryPre(c *gin.Context) (*model.User, *model.UserToken)
 // @Failure 500 {object} response.ErrorResponse
 // @Router /oidc/auth-query [get]
 func (o *Oauth) OidcAuthQuery(c *gin.Context) {
-	u, ut := o.OidcAuthQueryPre(c)
+	u, ut, identity, credential := o.oidcAuthQueryPre(c)
 	if u == nil || ut == nil {
 		return
 	}
-	c.JSON(http.StatusOK, apiResp.LoginRes{
+	res := apiResp.LoginRes{
 		AccessToken: ut.Token,
 		Type:        "access_token",
 		User:        *(&apiResp.UserPayload{}).FromUser(u),
-	})
+	}
+	if identity != nil {
+		res.Device = &apiResp.DeviceIdentityPayload{RustdeskId: identity.RustdeskId, PermanentPassword: credential, PasswordVersion: identity.CredentialVersion, Status: identity.Status}
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func isEnterpriseWindowsCandidate(cfg *config.DeviceIdentity, request *api.OidcAuthRequest) bool {
+	return cfg.Enabled && strings.EqualFold(strings.TrimSpace(request.DeviceInfo.Os), "windows") && request.DeviceInfo.Type == cfg.EnterpriseClientType
+}
+
+func oidcProviderAllowed(cfg *config.DeviceIdentity, op string) bool {
+	return !cfg.Enabled || op == cfg.FeishuOidcOp
+}
+
+func isEnterpriseWindowsRequest(cfg *config.DeviceIdentity, request *api.OidcAuthRequest) bool {
+	return isEnterpriseWindowsCandidate(cfg, request) && strings.TrimSpace(request.Uuid) != ""
 }
 
 // OauthCallback 回调
