@@ -21,6 +21,7 @@ import (
 	"github.com/lejianwen/rustdesk-api/v2/utils"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/spf13/cobra"
+	"gorm.io/gorm"
 )
 
 const DatabaseVersion = 267
@@ -256,13 +257,17 @@ func DatabaseAutoUpdate() {
 	}
 
 	if !db.Migrator().HasTable(&model.Version{}) {
-		Migrate(uint(version))
+		if err := Migrate(uint(version)); err != nil {
+			panic(fmt.Sprintf("database migration failed: %v", err))
+		}
 	} else {
 		//查找最后一个version
 		var v model.Version
 		db.Last(&v)
 		if v.Version < uint(version) {
-			Migrate(uint(version))
+			if err := Migrate(uint(version)); err != nil {
+				panic(fmt.Sprintf("database migration failed: %v", err))
+			}
 		}
 
 		// 245迁移
@@ -286,9 +291,9 @@ func DatabaseAutoUpdate() {
 	}
 
 }
-func Migrate(version uint) {
+func Migrate(version uint) error {
 	global.Logger.Info("Migrating....", version)
-	err := global.DB.AutoMigrate(
+	models := []interface{}{
 		&model.Version{},
 		&model.User{},
 		&model.UserToken{},
@@ -307,11 +312,11 @@ func Migrate(version uint) {
 		&model.ServerCmd{},
 		&model.DeviceGroup{},
 		&model.DeviceIdentity{},
-	)
-	if err != nil {
-		global.Logger.Error("migrate err :=>", err)
 	}
-	global.DB.Create(&model.Version{Version: version})
+	if err := migrateSchemaAndRecordVersion(global.DB, version, models...); err != nil {
+		global.Logger.Error("migrate err :=>", err)
+		return err
+	}
 	//如果是初次则创建一个默认用户
 	var vc int64
 	global.DB.Model(&model.Version{}).Count(&vc)
@@ -354,5 +359,12 @@ func Migrate(version uint) {
 		}
 		global.DB.Create(admin)
 	}
+	return nil
+}
 
+func migrateSchemaAndRecordVersion(db *gorm.DB, version uint, models ...interface{}) error {
+	if err := db.AutoMigrate(models...); err != nil {
+		return err
+	}
+	return db.Create(&model.Version{Version: version}).Error
 }

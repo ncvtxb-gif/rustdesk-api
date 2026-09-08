@@ -85,6 +85,7 @@ func ApiInit(g *gin.Engine) {
 	}
 	{
 		managedDevice := &api.ManagedDevice{}
+		frg.POST("/managed-device/bootstrap", managedDevice.Bootstrap)
 		frg.PUT("/managed-device/auth-hash", managedDevice.SetAuthenticationHash)
 	}
 	{

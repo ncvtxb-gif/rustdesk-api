@@ -35,11 +35,12 @@ func newControllerDeviceIdentityService(t *testing.T) (*service.DeviceIdentitySe
 
 func TestSetManagedDeviceAuthenticationHashUsesAuthenticatedTokenIdentity(t *testing.T) {
 	identityService, db := newControllerDeviceIdentityService(t)
-	identity, _, err := identityService.AllocateOrGetDeviceIdentity(db, 7, "machine-a", service.DeviceInfo{})
+	const machine = "550e8400-e29b-41d4-a716-446655440000"
+	identity, _, err := identityService.AllocateOrGetDeviceIdentity(db, 7, machine, service.DeviceInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := &model.UserToken{UserId: 7, DeviceUuid: "machine-a", DeviceId: identity.RustdeskId, Token: "access-token", ExpiredAt: 4102444800}
+	token := &model.UserToken{UserId: 7, DeviceUuid: machine, DeviceId: identity.RustdeskId, Token: "access-token", ExpiredAt: 4102444800}
 	if err := db.Create(token).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -66,5 +67,40 @@ func TestSetManagedDeviceAuthenticationHashUsesAuthenticatedTokenIdentity(t *tes
 	}
 	if got := identityService.AuthenticationHashByRustdeskID(db, identity.RustdeskId); got != wireHash {
 		t.Fatalf("stored hash %q, want %q", got, wireHash)
+	}
+}
+
+func TestManagedDeviceBootstrapReturnsOnlyAuthenticatedTokenIdentity(t *testing.T) {
+	identityService, db := newControllerDeviceIdentityService(t)
+	const machine = "550e8400-e29b-41d4-a716-446655440000"
+	identity, credential, err := identityService.AllocateOrGetDeviceIdentity(db, 7, machine, service.DeviceInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.UserToken{UserId: 7, DeviceUuid: machine, DeviceId: identity.RustdeskId, Token: "access-token", ExpiredAt: 4102444800}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	oldDB, oldServices := service.DB, service.AllService
+	service.DB = db
+	service.AllService = &service.Service{UserService: &service.UserService{}, DeviceIdentityService: identityService}
+	t.Cleanup(func() { service.DB, service.AllService = oldDB, oldServices })
+	recorder := httptest.NewRecorder()
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("curUser", &model.User{IdModel: model.IdModel{Id: 7}})
+		c.Set("token", "access-token")
+	})
+	router.POST("/api/managed-device/bootstrap", (&ManagedDevice{}).Bootstrap)
+	req := httptest.NewRequest(http.MethodPost, "/api/managed-device/bootstrap", bytes.NewBufferString(`{"machine_uuid":"{550E8400-E29B-41D4-A716-446655440000}","platform":"windows"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected response: %d %s", recorder.Code, recorder.Body.String())
+	}
+	for _, want := range []string{identity.RustdeskId, credential, machine, `"status":"active"`} {
+		if !bytes.Contains(recorder.Body.Bytes(), []byte(want)) {
+			t.Fatalf("bootstrap response %q missing %q", recorder.Body.String(), want)
+		}
 	}
 }

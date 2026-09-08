@@ -24,6 +24,7 @@ var (
 	ErrDeviceIdentityArchived    = errors.New("device identity is archived")
 	ErrDeviceIdentityNotFound    = errors.New("device identity was not found")
 	ErrInvalidAuthenticationHash = errors.New("authentication hash must be base64 encoded SHA-256 output")
+	ErrManagedDeviceUnauthorized = errors.New("managed device authorization failed")
 )
 
 type DeviceInfo struct {
@@ -66,7 +67,7 @@ func (s *DeviceIdentityService) AllocateOrGetDeviceIdentity(db *gorm.DB, userID 
 		return nil, "", ErrMachineUUIDRequired
 	}
 	var existing model.DeviceIdentity
-	err := db.Where("user_id = ? AND machine_uuid = ?", userID, machineUUID).First(&existing).Error
+	err := db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND machine_uuid = ?", userID, machineUUID).First(&existing).Error
 	if err == nil {
 		if existing.Status == model.DeviceIdentityStatusArchived {
 			return nil, "", ErrDeviceIdentityArchived
@@ -76,11 +77,18 @@ func (s *DeviceIdentityService) AllocateOrGetDeviceIdentity(db *gorm.DB, userID 
 			return nil, "", decryptErr
 		}
 		now := time.Now().UTC()
-		if updateErr := db.Model(&existing).Updates(map[string]interface{}{"last_auth_at": now, "status": model.DeviceIdentityStatusActive}).Error; updateErr != nil {
+		result := db.Model(&model.DeviceIdentity{}).
+			Where("id = ? AND status <> ?", existing.Id, model.DeviceIdentityStatusArchived).
+			Updates(map[string]interface{}{"last_auth_at": now, "status": model.DeviceIdentityStatusActive})
+		if result.Error != nil {
+			return nil, "", result.Error
+		}
+		if result.RowsAffected != 1 {
+			return nil, "", ErrDeviceIdentityArchived
+		}
+		if updateErr := db.First(&existing, existing.Id).Error; updateErr != nil {
 			return nil, "", updateErr
 		}
-		existing.LastAuthAt = now
-		existing.Status = model.DeviceIdentityStatusActive
 		return &existing, credential, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -123,10 +131,15 @@ func (s *DeviceIdentityService) AllocateOrGetDeviceIdentity(db *gorm.DB, userID 
 }
 
 func (s *DeviceIdentityService) LoginWithDeviceIdentity(user *model.User, loginLog *model.LoginLog) (*model.UserToken, *model.DeviceIdentity, string, error) {
+	canonicalUUID, err := CanonicalMachineUUID(loginLog.Uuid)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	loginLog.Uuid = canonicalUUID
 	var token *model.UserToken
 	var identity *model.DeviceIdentity
 	var credential string
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err = DB.Transaction(func(tx *gorm.DB) error {
 		var err error
 		identity, credential, err = s.AllocateOrGetDeviceIdentity(tx, user.Id, loginLog.Uuid, DeviceInfo{OS: loginLog.Platform, ClientType: loginLog.Client})
 		if err != nil {
@@ -135,6 +148,9 @@ func (s *DeviceIdentityService) LoginWithDeviceIdentity(user *model.User, loginL
 		if err = tx.Model(&model.DeviceIdentity{}).
 			Where("machine_uuid = ? AND user_id <> ? AND status = ?", loginLog.Uuid, user.Id, model.DeviceIdentityStatusActive).
 			Update("status", model.DeviceIdentityStatusInactive).Error; err != nil {
+			return err
+		}
+		if err = tx.Where("device_uuid = ? AND user_id <> ?", loginLog.Uuid, user.Id).Delete(&model.UserToken{}).Error; err != nil {
 			return err
 		}
 		tokenValue := (&UserService{}).GenerateToken(user)
@@ -150,6 +166,14 @@ func (s *DeviceIdentityService) LoginWithDeviceIdentity(user *model.User, loginL
 		return nil, nil, "", err
 	}
 	return token, identity, credential, nil
+}
+
+func CanonicalMachineUUID(machineUUID string) (string, error) {
+	parsed, err := uuid.Parse(strings.TrimSpace(machineUUID))
+	if err != nil {
+		return "", ErrMachineUUIDRequired
+	}
+	return parsed.String(), nil
 }
 
 func (s *DeviceIdentityService) encryptCredential(identity *model.DeviceIdentity, credential string) error {
@@ -199,7 +223,54 @@ func (s *DeviceIdentityService) SetAuthenticationHash(db *gorm.DB, userID uint, 
 	if identity.Status == model.DeviceIdentityStatusArchived {
 		return ErrDeviceIdentityArchived
 	}
+	if identity.Status != model.DeviceIdentityStatusActive {
+		return ErrManagedDeviceUnauthorized
+	}
 	return db.Model(&identity).Update("authentication_hash", wireHash).Error
+}
+
+func (s *DeviceIdentityService) managedIdentityForToken(db *gorm.DB, userID uint, tokenValue, requestedUUID string) (*model.DeviceIdentity, error) {
+	canonicalRequested, err := CanonicalMachineUUID(requestedUUID)
+	if err != nil {
+		return nil, ErrManagedDeviceUnauthorized
+	}
+	var token model.UserToken
+	if err := db.Where("user_id = ? AND token = ?", userID, tokenValue).First(&token).Error; err != nil {
+		return nil, ErrManagedDeviceUnauthorized
+	}
+	canonicalToken, err := CanonicalMachineUUID(token.DeviceUuid)
+	if err != nil || canonicalToken != canonicalRequested || token.DeviceId == "" || (token.ExpiredAt > 0 && token.ExpiredAt <= time.Now().Unix()) {
+		return nil, ErrManagedDeviceUnauthorized
+	}
+	var identity model.DeviceIdentity
+	if err := db.Where("user_id = ? AND machine_uuid = ? AND rustdesk_id = ? AND status = ?", userID, canonicalRequested, token.DeviceId, model.DeviceIdentityStatusActive).First(&identity).Error; err != nil {
+		return nil, ErrManagedDeviceUnauthorized
+	}
+	return &identity, nil
+}
+
+func (s *DeviceIdentityService) BootstrapForToken(db *gorm.DB, userID uint, tokenValue, machineUUID string) (*model.DeviceIdentity, string, error) {
+	identity, err := s.managedIdentityForToken(db, userID, tokenValue, machineUUID)
+	if err != nil {
+		return nil, "", err
+	}
+	credential, err := s.DecryptCredential(identity)
+	if err != nil {
+		return nil, "", err
+	}
+	return identity, credential, nil
+}
+
+func (s *DeviceIdentityService) SetAuthenticationHashForToken(db *gorm.DB, userID uint, tokenValue, wireHash string) error {
+	var token model.UserToken
+	if err := db.Where("user_id = ? AND token = ?", userID, tokenValue).First(&token).Error; err != nil {
+		return ErrManagedDeviceUnauthorized
+	}
+	identity, err := s.managedIdentityForToken(db, userID, tokenValue, token.DeviceUuid)
+	if err != nil {
+		return err
+	}
+	return s.SetAuthenticationHash(db, userID, identity.MachineUuid, wireHash)
 }
 
 func (s *DeviceIdentityService) AuthenticationHashByRustdeskID(db *gorm.DB, rustdeskID string) string {

@@ -41,10 +41,12 @@ func (o *Oauth) OidcAuth(c *gin.Context) {
 	}
 	enterprise := isEnterpriseWindowsCandidate(&global.Config.DeviceIdentity, f)
 	if enterprise {
-		if strings.TrimSpace(f.Uuid) == "" {
+		canonicalUUID, err := service.CanonicalMachineUUID(f.Uuid)
+		if err != nil {
 			response.Error(c, response.TranslateMsg(c, "ParamsError")+": machine UUID is required")
 			return
 		}
+		f.Uuid = canonicalUUID
 		if f.Op != global.Config.DeviceIdentity.FeishuOidcOp {
 			response.Error(c, response.TranslateMsg(c, "ParamsError")+": unsupported OIDC provider")
 			return
@@ -118,9 +120,6 @@ func (o *Oauth) oidcAuthQueryPre(c *gin.Context) (*model.User, *model.UserToken,
 		return nil, nil, nil, ""
 	}
 
-	// 删除 OAuth 缓存
-	service.AllService.OauthService.DeleteOauthCache(q.Code)
-
 	// 创建登录日志并生成用户令牌
 	loginLog := &model.LoginLog{
 		UserId:   u.Id,
@@ -141,7 +140,7 @@ func (o *Oauth) oidcAuthQueryPre(c *gin.Context) (*model.User, *model.UserToken,
 		var err error
 		ut, identity, credential, err = service.AllService.DeviceIdentityService.LoginWithDeviceIdentity(u, loginLog)
 		if err != nil {
-			response.Error(c, response.TranslateMsg(c, "LoginFailed")+": "+err.Error())
+			response.Error(c, response.TranslateMsg(c, "LoginFailed"))
 			return nil, nil, nil, ""
 		}
 	} else {
@@ -152,6 +151,8 @@ func (o *Oauth) oidcAuthQueryPre(c *gin.Context) (*model.User, *model.UserToken,
 		response.Error(c, response.TranslateMsg(c, "LoginFailed"))
 		return nil, nil, nil, ""
 	}
+	// Consume the one-time OAuth result only after token and managed identity commit.
+	service.AllService.OauthService.DeleteOauthCache(q.Code)
 
 	// 返回用户令牌
 	return u, ut, identity, credential

@@ -2,10 +2,12 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	request "github.com/lejianwen/rustdesk-api/v2/http/request/api"
 	"github.com/lejianwen/rustdesk-api/v2/http/response"
+	apiResp "github.com/lejianwen/rustdesk-api/v2/http/response/api"
 	"github.com/lejianwen/rustdesk-api/v2/service"
 )
 
@@ -29,14 +31,37 @@ func (m *ManagedDevice) SetAuthenticationHash(c *gin.Context) {
 		response.Error(c, response.TranslateMsg(c, "NoAccess"))
 		return
 	}
-	machineUUID := service.AllService.UserService.GetUuidByToken(user, token)
-	if machineUUID == "" || service.AllService.DeviceIdentityService == nil {
+	if service.AllService.DeviceIdentityService == nil {
 		response.Error(c, response.TranslateMsg(c, "NoAccess"))
 		return
 	}
-	if err := service.AllService.DeviceIdentityService.SetAuthenticationHash(service.DB, user.Id, machineUUID, form.Hash); err != nil {
+	if err := service.AllService.DeviceIdentityService.SetAuthenticationHashForToken(service.DB, user.Id, token, form.Hash); err != nil {
 		response.Error(c, response.TranslateMsg(c, "OperationFailed"))
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (m *ManagedDevice) Bootstrap(c *gin.Context) {
+	form := &request.ManagedDeviceBootstrap{}
+	if err := c.ShouldBindJSON(form); err != nil || !strings.EqualFold(strings.TrimSpace(form.Platform), "windows") {
+		response.Error(c, response.TranslateMsg(c, "ParamsError"))
+		return
+	}
+	user := service.AllService.UserService.CurUser(c)
+	tokenValue, ok := c.Get("token")
+	token, tokenOK := tokenValue.(string)
+	if user == nil || !ok || !tokenOK || service.AllService.DeviceIdentityService == nil {
+		response.Error(c, response.TranslateMsg(c, "NoAccess"))
+		return
+	}
+	identity, credential, err := service.AllService.DeviceIdentityService.BootstrapForToken(service.DB, user.Id, token, form.MachineUUID)
+	if err != nil {
+		response.Error(c, response.TranslateMsg(c, "NoAccess"))
+		return
+	}
+	c.JSON(http.StatusOK, &apiResp.DeviceIdentityPayload{
+		RustdeskId: identity.RustdeskId, PermanentPassword: credential, PasswordVersion: identity.CredentialVersion,
+		Status: identity.Status, MachineUuid: identity.MachineUuid,
+	})
 }

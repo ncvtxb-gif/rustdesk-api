@@ -63,4 +63,5 @@ type DeviceIdentityPayload struct {
 	PermanentPassword string `json:"permanent_password"`
 	PasswordVersion   uint   `json:"password_version"`
 	Status            string `json:"status"`
+	MachineUuid       string `json:"machine_uuid,omitempty"`
 }

@@ -172,7 +172,8 @@ func TestAllocateOrGetDeviceIdentityProducesGloballyUniqueIDs(t *testing.T) {
 
 func TestLoginWithDeviceIdentityRollsBackTokenWhenIdentityIsArchived(t *testing.T) {
 	svc, db := newDeviceIdentityTestService(t)
-	identity, _ := allocateIdentity(t, svc, db, 7, "machine-a")
+	const machine = "550e8400-e29b-41d4-a716-446655440000"
+	identity, _ := allocateIdentity(t, svc, db, 7, machine)
 	if err := db.Model(identity).Update("status", model.DeviceIdentityStatusArchived).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +184,7 @@ func TestLoginWithDeviceIdentityRollsBackTokenWhenIdentityIsArchived(t *testing.
 	AllService = &Service{DeviceIdentityService: svc}
 	t.Cleanup(func() { DB, AllService, Config, Jwt = oldDB, oldIdentityService, oldConfig, oldJWT })
 	user := &model.User{IdModel: model.IdModel{Id: 7}, Username: "feishu-user"}
-	_, _, _, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 7, Uuid: "machine-a", DeviceId: "", Client: "enterprise-windows", Platform: "windows"})
+	_, _, _, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 7, Uuid: machine, DeviceId: "", Client: "enterprise-windows", Platform: "windows"})
 	if !errors.Is(err, ErrDeviceIdentityArchived) {
 		t.Fatalf("expected archived error, got %v", err)
 	}
@@ -205,11 +206,11 @@ func TestLoginWithDeviceIdentityCommitsMatchingTokenAndLog(t *testing.T) {
 	AllService = &Service{DeviceIdentityService: svc}
 	t.Cleanup(func() { DB, AllService, Config, Jwt = oldDB, oldServices, oldConfig, oldJWT })
 	user := &model.User{IdModel: model.IdModel{Id: 7}, Username: "feishu-user"}
-	token, identity, credential, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 7, Uuid: "machine-a", Client: "enterprise-windows", Platform: "windows"})
+	token, identity, credential, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 7, Uuid: "550e8400-e29b-41d4-a716-446655440000", Client: "enterprise-windows", Platform: "windows"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token.DeviceId != identity.RustdeskId || token.DeviceUuid != "machine-a" || credential == "" {
+	if token.DeviceId != identity.RustdeskId || token.DeviceUuid != "550e8400-e29b-41d4-a716-446655440000" || credential == "" {
 		t.Fatalf("inconsistent login result: token=%+v identity=%+v", token, identity)
 	}
 	var log model.LoginLog
@@ -223,7 +224,8 @@ func TestLoginWithDeviceIdentityCommitsMatchingTokenAndLog(t *testing.T) {
 
 func TestLoginWithDeviceIdentityMakesOtherAccountOnMachineInactive(t *testing.T) {
 	svc, db := newDeviceIdentityTestService(t)
-	first, _ := allocateIdentity(t, svc, db, 7, "machine-a")
+	const machine = "550e8400-e29b-41d4-a716-446655440000"
+	first, _ := allocateIdentity(t, svc, db, 7, machine)
 	oldDB, oldServices, oldConfig, oldJWT := DB, AllService, Config, Jwt
 	DB = db
 	Config = &config.Config{}
@@ -231,7 +233,7 @@ func TestLoginWithDeviceIdentityMakesOtherAccountOnMachineInactive(t *testing.T)
 	AllService = &Service{DeviceIdentityService: svc}
 	t.Cleanup(func() { DB, AllService, Config, Jwt = oldDB, oldServices, oldConfig, oldJWT })
 	user := &model.User{IdModel: model.IdModel{Id: 8}, Username: "second-user"}
-	if _, _, _, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 8, Uuid: "machine-a", Client: "enterprise-windows", Platform: "windows"}); err != nil {
+	if _, _, _, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 8, Uuid: machine, Client: "enterprise-windows", Platform: "windows"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.First(first, first.Id).Error; err != nil {
@@ -239,5 +241,35 @@ func TestLoginWithDeviceIdentityMakesOtherAccountOnMachineInactive(t *testing.T)
 	}
 	if first.Status != model.DeviceIdentityStatusInactive {
 		t.Fatalf("previous account identity remained %q", first.Status)
+	}
+}
+
+func TestLoginWithDeviceIdentityCanonicalizesUUIDAndRevokesOtherAccountTokens(t *testing.T) {
+	svc, db := newDeviceIdentityTestService(t)
+	oldDB, oldServices, oldConfig, oldJWT := DB, AllService, Config, Jwt
+	DB = db
+	Config = &config.Config{}
+	Jwt = jwtlib.NewJwt("", 0)
+	AllService = &Service{DeviceIdentityService: svc}
+	t.Cleanup(func() { DB, AllService, Config, Jwt = oldDB, oldServices, oldConfig, oldJWT })
+
+	const canonical = "550e8400-e29b-41d4-a716-446655440000"
+	if err := db.Create(&model.UserToken{UserId: 7, DeviceUuid: canonical, DeviceId: "old-id", Token: "old-token"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{IdModel: model.IdModel{Id: 8}, Username: "second-user"}
+	token, identity, _, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 8, Uuid: "{550E8400-E29B-41D4-A716-446655440000}", Client: "enterprise-windows", Platform: "windows"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token.DeviceUuid != canonical || identity.MachineUuid != canonical {
+		t.Fatalf("UUID was not canonicalized: token=%q identity=%q", token.DeviceUuid, identity.MachineUuid)
+	}
+	var count int64
+	if err := db.Model(&model.UserToken{}).Where("token = ?", "old-token").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("other account token for the same machine was not revoked")
 	}
 }
