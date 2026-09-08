@@ -84,6 +84,10 @@ func ApiInit(g *gin.Engine) {
 		frg.POST("/logout", l.Logout)
 	}
 	{
+		managedDevice := &api.ManagedDevice{}
+		frg.PUT("/managed-device/auth-hash", managedDevice.SetAuthenticationHash)
+	}
+	{
 		gr := &api.Group{}
 		frg.GET("/users", gr.Users)
 		frg.GET("/peers", gr.Peers)

@@ -111,7 +111,8 @@ func (g *Group) Peers(c *gin.Context) {
 			dGroupName = ""
 		}
 		pp := &apiResp.GroupPeerPayload{}
-		pp.FromPeer(peer, uname, dGroupName)
+		managedHash := managedAuthenticationHash(u, peer.Id)
+		pp.FromPeerWithManagedHash(peer, uname, dGroupName, managedHash != "", managedHash)
 		data = append(data, pp)
 
 	}
@@ -119,6 +120,14 @@ func (g *Group) Peers(c *gin.Context) {
 		Total: uint(peerList.Total),
 		Data:  data,
 	})
+}
+
+func managedAuthenticationHash(user *model.User, rustdeskID string) string {
+	if user == nil || user.IsAdmin == nil || service.AllService == nil || service.AllService.UserService == nil ||
+		!service.AllService.UserService.IsAdmin(user) || service.AllService.DeviceIdentityService == nil {
+		return ""
+	}
+	return service.AllService.DeviceIdentityService.AuthenticationHashByRustdeskID(service.DB, rustdeskID)
 }
 
 // Device

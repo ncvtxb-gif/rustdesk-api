@@ -16,6 +16,7 @@ type DeviceIdentity struct {
 	RustdeskId           string    `json:"rustdesk_id" gorm:"not null;uniqueIndex"`
 	CredentialCiphertext string    `json:"-" gorm:"not null"`
 	CredentialNonce      string    `json:"-" gorm:"not null"`
+	AuthenticationHash   string    `json:"-" gorm:"not null;default:''"`
 	CredentialVersion    uint      `json:"credential_version" gorm:"not null;default:1"`
 	KeyVersion           uint      `json:"-" gorm:"not null;default:1"`
 	Status               string    `json:"status" gorm:"not null;default:active;index"`

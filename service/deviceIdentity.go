@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	cryptorand "crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -19,8 +20,10 @@ import (
 )
 
 var (
-	ErrMachineUUIDRequired    = errors.New("machine UUID is required")
-	ErrDeviceIdentityArchived = errors.New("device identity is archived")
+	ErrMachineUUIDRequired       = errors.New("machine UUID is required")
+	ErrDeviceIdentityArchived    = errors.New("device identity is archived")
+	ErrDeviceIdentityNotFound    = errors.New("device identity was not found")
+	ErrInvalidAuthenticationHash = errors.New("authentication hash must be base64 encoded SHA-256 output")
 )
 
 type DeviceInfo struct {
@@ -129,6 +132,11 @@ func (s *DeviceIdentityService) LoginWithDeviceIdentity(user *model.User, loginL
 		if err != nil {
 			return err
 		}
+		if err = tx.Model(&model.DeviceIdentity{}).
+			Where("machine_uuid = ? AND user_id <> ? AND status = ?", loginLog.Uuid, user.Id, model.DeviceIdentityStatusActive).
+			Update("status", model.DeviceIdentityStatusInactive).Error; err != nil {
+			return err
+		}
 		tokenValue := (&UserService{}).GenerateToken(user)
 		token = &model.UserToken{UserId: user.Id, Token: tokenValue, DeviceUuid: loginLog.Uuid, DeviceId: identity.RustdeskId, ExpiredAt: (&UserService{}).UserTokenExpireTimestamp()}
 		if err = tx.Create(token).Error; err != nil {
@@ -171,6 +179,35 @@ func (s *DeviceIdentityService) DecryptCredential(identity *model.DeviceIdentity
 		return "", err
 	}
 	return string(plaintext), nil
+}
+
+func (s *DeviceIdentityService) SetAuthenticationHash(db *gorm.DB, userID uint, machineUUID, wireHash string) error {
+	if len(wireHash) != base64.StdEncoding.EncodedLen(sha256.Size) {
+		return ErrInvalidAuthenticationHash
+	}
+	decoded, err := base64.StdEncoding.DecodeString(wireHash)
+	if err != nil || len(decoded) != 32 {
+		return ErrInvalidAuthenticationHash
+	}
+	var identity model.DeviceIdentity
+	if err := db.Where("user_id = ? AND machine_uuid = ?", userID, strings.TrimSpace(machineUUID)).First(&identity).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrDeviceIdentityNotFound
+		}
+		return err
+	}
+	if identity.Status == model.DeviceIdentityStatusArchived {
+		return ErrDeviceIdentityArchived
+	}
+	return db.Model(&identity).Update("authentication_hash", wireHash).Error
+}
+
+func (s *DeviceIdentityService) AuthenticationHashByRustdeskID(db *gorm.DB, rustdeskID string) string {
+	var identity model.DeviceIdentity
+	if err := db.Select("authentication_hash").Where("rustdesk_id = ? AND status = ?", rustdeskID, model.DeviceIdentityStatusActive).First(&identity).Error; err != nil {
+		return ""
+	}
+	return identity.AuthenticationHash
 }
 
 func randomRustdeskID() (string, error) {

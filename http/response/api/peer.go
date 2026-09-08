@@ -39,6 +39,7 @@ type GroupPeerPayload struct {
 	UserName        string           `json:"user_name"`
 	Note            string           `json:"note"`
 	DeviceGroupName string           `json:"device_group_name"`
+	Hash            string           `json:"hash,omitempty"`
 }
 type PeerPayloadInfo struct {
 	DeviceName string `json:"device_name"`
@@ -70,4 +71,11 @@ func (gpp *GroupPeerPayload) FromPeer(p *model.Peer, username string, dGroupName
 	gpp.Note = ""
 	gpp.UserName = username
 	gpp.DeviceGroupName = dGroupName
+}
+
+func (gpp *GroupPeerPayload) FromPeerWithManagedHash(p *model.Peer, username, deviceGroupName string, administrator bool, managedHash string) {
+	gpp.FromPeer(p, username, deviceGroupName)
+	if administrator {
+		gpp.Hash = managedHash
+	}
 }

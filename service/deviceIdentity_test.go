@@ -220,3 +220,24 @@ func TestLoginWithDeviceIdentityCommitsMatchingTokenAndLog(t *testing.T) {
 		t.Fatalf("login log not linked to token and identity: %+v", log)
 	}
 }
+
+func TestLoginWithDeviceIdentityMakesOtherAccountOnMachineInactive(t *testing.T) {
+	svc, db := newDeviceIdentityTestService(t)
+	first, _ := allocateIdentity(t, svc, db, 7, "machine-a")
+	oldDB, oldServices, oldConfig, oldJWT := DB, AllService, Config, Jwt
+	DB = db
+	Config = &config.Config{}
+	Jwt = jwtlib.NewJwt("", 0)
+	AllService = &Service{DeviceIdentityService: svc}
+	t.Cleanup(func() { DB, AllService, Config, Jwt = oldDB, oldServices, oldConfig, oldJWT })
+	user := &model.User{IdModel: model.IdModel{Id: 8}, Username: "second-user"}
+	if _, _, _, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 8, Uuid: "machine-a", Client: "enterprise-windows", Platform: "windows"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(first, first.Id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != model.DeviceIdentityStatusInactive {
+		t.Fatalf("previous account identity remained %q", first.Status)
+	}
+}
