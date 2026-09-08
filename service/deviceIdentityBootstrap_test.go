@@ -197,3 +197,59 @@ func TestBootstrapRejectsInactiveAndArchivedEnterpriseIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedTokenWithoutIdentityDoesNotRefresh(t *testing.T) {
+	_, db := newDeviceIdentityTestService(t)
+	oldExpiry := time.Now().Unix() + 60
+	token := &model.UserToken{UserId: 7, DeviceUuid: testOpaqueMachineUUID, DeviceId: "123456789", Token: "missing-managed-identity", ExpiredAt: oldExpiry}
+	if err := db.Create(token).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.LoginLog{
+		UserId: token.UserId, UserTokenId: token.Id, Client: "enterprise-windows",
+		Platform: "windows", Type: model.LoginLogTypeOauth, Uuid: token.DeviceUuid, DeviceId: token.DeviceId,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	oldDB, oldConfig := DB, Config
+	DB = db
+	Config = &config.Config{
+		App:            config.App{TokenExpire: 24 * time.Hour},
+		DeviceIdentity: config.DeviceIdentity{Enabled: true, EnterpriseClientType: "enterprise-windows"},
+	}
+	t.Cleanup(func() { DB, Config = oldDB, oldConfig })
+
+	(&UserService{}).AutoRefreshAccessToken(token)
+	var stored model.UserToken
+	if err := db.First(&stored, token.Id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExpiredAt != oldExpiry {
+		t.Fatalf("managed token without identity renewed from %d to %d", oldExpiry, stored.ExpiredAt)
+	}
+}
+
+func TestLegacyTokenWithoutIdentityRetainsSlidingRefresh(t *testing.T) {
+	_, db := newDeviceIdentityTestService(t)
+	oldExpiry := time.Now().Unix() + 60
+	token := &model.UserToken{UserId: 7, DeviceUuid: testOpaqueMachineUUID, DeviceId: "legacy-device", Token: "legacy-token", ExpiredAt: oldExpiry}
+	if err := db.Create(token).Error; err != nil {
+		t.Fatal(err)
+	}
+	oldDB, oldConfig := DB, Config
+	DB = db
+	Config = &config.Config{
+		App:            config.App{TokenExpire: 24 * time.Hour},
+		DeviceIdentity: config.DeviceIdentity{Enabled: true, EnterpriseClientType: "enterprise-windows"},
+	}
+	t.Cleanup(func() { DB, Config = oldDB, oldConfig })
+
+	(&UserService{}).AutoRefreshAccessToken(token)
+	var stored model.UserToken
+	if err := db.First(&stored, token.Id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExpiredAt <= oldExpiry {
+		t.Fatalf("legacy token did not retain sliding refresh: old=%d stored=%d", oldExpiry, stored.ExpiredAt)
+	}
+}

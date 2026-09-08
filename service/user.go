@@ -523,12 +523,33 @@ func (us *UserService) enterpriseTokenMayRefresh(ut *model.UserToken) bool {
 		ut.UserId, ut.DeviceUuid, ut.DeviceId,
 	).First(&identity).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return true
+		return !us.isEnterpriseManagedToken(ut)
 	}
 	if err != nil {
 		return false
 	}
 	return identity.Status == model.DeviceIdentityStatusActive
+}
+
+// isEnterpriseManagedToken uses the token-linked login log written in the same
+// transaction as managed identity allocation. Legacy tokens have no matching
+// enterprise login record and therefore keep their historical refresh policy.
+func (us *UserService) isEnterpriseManagedToken(ut *model.UserToken) bool {
+	if Config == nil || !Config.DeviceIdentity.Enabled ||
+		Config.DeviceIdentity.EnterpriseClientType == "" || ut.Id == 0 {
+		return false
+	}
+	var login model.LoginLog
+	err := DB.Select("id").Where(
+		"user_token_id = ? AND user_id = ? AND client = ? AND platform = ? AND type = ? AND uuid = ? AND device_id = ?",
+		ut.Id, ut.UserId, Config.DeviceIdentity.EnterpriseClientType, "windows", model.LoginLogTypeOauth, ut.DeviceUuid, ut.DeviceId,
+	).First(&login).Error
+	if err == nil {
+		return true
+	}
+	// Database errors are not evidence that a managed marker is absent. Fail
+	// closed for a token shaped like an enterprise token until storage recovers.
+	return !errors.Is(err, gorm.ErrRecordNotFound)
 }
 
 func (us *UserService) BatchDeleteUserToken(ids []uint) error {
