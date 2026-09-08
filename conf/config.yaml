@@ -10,6 +10,12 @@ app:
   web-sso: true #web auth sso
   disable-pwd-login: false #禁用密码登录
 
+device-identity:
+  enabled: false
+  master-key: "" # base64 encoded 32-byte key; set with RUSTDESK_API_DEVICE_IDENTITY_MASTER_KEY
+  feishu-oidc-op: "feishu"
+  enterprise-client-type: "enterprise-windows"
+
 admin:
   title: "RustDesk API Admin"
   hello-file: "./conf/admin/hello.html"  #优先使用file

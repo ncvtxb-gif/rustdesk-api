@@ -1,0 +1,195 @@
+package service
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	cryptorand "crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"math/big"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/lejianwen/rustdesk-api/v2/config"
+	"github.com/lejianwen/rustdesk-api/v2/model"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+var (
+	ErrMachineUUIDRequired    = errors.New("machine UUID is required")
+	ErrDeviceIdentityArchived = errors.New("device identity is archived")
+)
+
+type DeviceInfo struct {
+	OS         string
+	ClientType string
+}
+
+type DeviceIdentityService struct {
+	aead cipher.AEAD
+}
+
+func NewDeviceIdentityService(cfg *config.DeviceIdentity) (*DeviceIdentityService, error) {
+	if strings.TrimSpace(cfg.FeishuOidcOp) == "" {
+		return nil, errors.New("Feishu OIDC provider is required")
+	}
+	if strings.TrimSpace(cfg.EnterpriseClientType) == "" {
+		return nil, errors.New("enterprise client type is required")
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(cfg.MasterKey))
+	if err != nil {
+		return nil, fmt.Errorf("decode device identity master key: %w", err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("device identity master key must decode to 32 bytes")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("create device identity cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("create device identity AEAD: %w", err)
+	}
+	return &DeviceIdentityService{aead: aead}, nil
+}
+
+func (s *DeviceIdentityService) AllocateOrGetDeviceIdentity(db *gorm.DB, userID uint, machineUUID string, _ DeviceInfo) (*model.DeviceIdentity, string, error) {
+	machineUUID = strings.TrimSpace(machineUUID)
+	if machineUUID == "" {
+		return nil, "", ErrMachineUUIDRequired
+	}
+	var existing model.DeviceIdentity
+	err := db.Where("user_id = ? AND machine_uuid = ?", userID, machineUUID).First(&existing).Error
+	if err == nil {
+		if existing.Status == model.DeviceIdentityStatusArchived {
+			return nil, "", ErrDeviceIdentityArchived
+		}
+		credential, decryptErr := s.DecryptCredential(&existing)
+		if decryptErr != nil {
+			return nil, "", decryptErr
+		}
+		now := time.Now().UTC()
+		if updateErr := db.Model(&existing).Updates(map[string]interface{}{"last_auth_at": now, "status": model.DeviceIdentityStatusActive}).Error; updateErr != nil {
+			return nil, "", updateErr
+		}
+		existing.LastAuthAt = now
+		existing.Status = model.DeviceIdentityStatusActive
+		return &existing, credential, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, "", err
+	}
+
+	for attempt := 0; attempt < 32; attempt++ {
+		rustdeskID, generateErr := randomRustdeskID()
+		if generateErr != nil {
+			return nil, "", generateErr
+		}
+		identity := &model.DeviceIdentity{
+			AllocationUuid: uuid.NewString(), UserId: userID, MachineUuid: machineUUID,
+			RustdeskId: rustdeskID, CredentialVersion: 1, KeyVersion: 1,
+			Status: model.DeviceIdentityStatusActive, LastAuthAt: time.Now().UTC(),
+		}
+		credential, generateErr := randomCredential(20)
+		if generateErr != nil {
+			return nil, "", generateErr
+		}
+		if encryptErr := s.encryptCredential(identity, credential); encryptErr != nil {
+			return nil, "", encryptErr
+		}
+		result := db.Clauses(clause.OnConflict{DoNothing: true}).Create(identity)
+		if result.Error != nil {
+			return nil, "", result.Error
+		}
+		if result.RowsAffected == 1 {
+			return identity, credential, nil
+		}
+		if lookupErr := db.Where("user_id = ? AND machine_uuid = ?", userID, machineUUID).First(&existing).Error; lookupErr == nil {
+			if existing.Status == model.DeviceIdentityStatusArchived {
+				return nil, "", ErrDeviceIdentityArchived
+			}
+			credential, decryptErr := s.DecryptCredential(&existing)
+			return &existing, credential, decryptErr
+		}
+	}
+	return nil, "", errors.New("unable to allocate unique device identity")
+}
+
+func (s *DeviceIdentityService) LoginWithDeviceIdentity(user *model.User, loginLog *model.LoginLog) (*model.UserToken, *model.DeviceIdentity, string, error) {
+	var token *model.UserToken
+	var identity *model.DeviceIdentity
+	var credential string
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		identity, credential, err = s.AllocateOrGetDeviceIdentity(tx, user.Id, loginLog.Uuid, DeviceInfo{OS: loginLog.Platform, ClientType: loginLog.Client})
+		if err != nil {
+			return err
+		}
+		tokenValue := (&UserService{}).GenerateToken(user)
+		token = &model.UserToken{UserId: user.Id, Token: tokenValue, DeviceUuid: loginLog.Uuid, DeviceId: identity.RustdeskId, ExpiredAt: (&UserService{}).UserTokenExpireTimestamp()}
+		if err = tx.Create(token).Error; err != nil {
+			return err
+		}
+		loginLog.DeviceId = identity.RustdeskId
+		loginLog.UserTokenId = token.Id
+		return tx.Create(loginLog).Error
+	})
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return token, identity, credential, nil
+}
+
+func (s *DeviceIdentityService) encryptCredential(identity *model.DeviceIdentity, credential string) error {
+	nonce := make([]byte, s.aead.NonceSize())
+	if _, err := cryptorand.Read(nonce); err != nil {
+		return err
+	}
+	aad := []byte(identity.AllocationUuid + ":" + identity.RustdeskId)
+	ciphertext := s.aead.Seal(nil, nonce, []byte(credential), aad)
+	identity.CredentialNonce = base64.StdEncoding.EncodeToString(nonce)
+	identity.CredentialCiphertext = base64.StdEncoding.EncodeToString(ciphertext)
+	return nil
+}
+
+func (s *DeviceIdentityService) DecryptCredential(identity *model.DeviceIdentity) (string, error) {
+	nonce, err := base64.StdEncoding.DecodeString(identity.CredentialNonce)
+	if err != nil {
+		return "", err
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(identity.CredentialCiphertext)
+	if err != nil {
+		return "", err
+	}
+	aad := []byte(identity.AllocationUuid + ":" + identity.RustdeskId)
+	plaintext, err := s.aead.Open(nil, nonce, ciphertext, aad)
+	if err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
+}
+
+func randomRustdeskID() (string, error) {
+	n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(900000000))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%09d", n.Int64()+100000000), nil
+}
+
+func randomCredential(length int) (string, error) {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+	out := make([]byte, length)
+	for i := range out {
+		n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", err
+		}
+		out[i] = alphabet[n.Int64()]
+	}
+	return string(out), nil
+}

@@ -24,6 +24,7 @@ type Service struct {
 	*ServerCmdService
 	*LdapService
 	*AppService
+	*DeviceIdentityService
 }
 
 type Dependencies struct {
@@ -49,6 +50,13 @@ func New(c *config.Config, g *gorm.DB, l *log.Logger, j *jwt.Jwt, lo lock.Locker
 	Jwt = j
 	Lock = lo
 	AllService = new(Service)
+	if c.DeviceIdentity.Enabled {
+		identityService, err := NewDeviceIdentityService(&c.DeviceIdentity)
+		if err != nil {
+			panic(err)
+		}
+		AllService.DeviceIdentityService = identityService
+	}
 	return AllService
 }
 

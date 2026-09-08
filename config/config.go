@@ -24,6 +24,13 @@ type App struct {
 	CaptchaThreshold int           `mapstructure:"captcha-threshold"`
 	BanThreshold     int           `mapstructure:"ban-threshold"`
 }
+
+type DeviceIdentity struct {
+	Enabled              bool   `mapstructure:"enabled"`
+	MasterKey            string `mapstructure:"master-key"`
+	FeishuOidcOp         string `mapstructure:"feishu-oidc-op"`
+	EnterpriseClientType string `mapstructure:"enterprise-client-type"`
+}
 type Admin struct {
 	Title           string `mapstructure:"title"`
 	Hello           string `mapstructure:"hello"`
@@ -32,21 +39,22 @@ type Admin struct {
 	RelayServerPort int    `mapstructure:"relay-server-port"`
 }
 type Config struct {
-	Lang       string `mapstructure:"lang"`
-	App        App
-	Admin      Admin
-	Gorm       Gorm
-	Mysql      Mysql
-	Postgresql Postgresql
-	Gin        Gin
-	Logger     Logger
-	Redis      Redis
-	Cache      Cache
-	Oss        Oss
-	Jwt        Jwt
-	Rustdesk   Rustdesk
-	Proxy      Proxy
-	Ldap       Ldap
+	Lang           string `mapstructure:"lang"`
+	App            App
+	Admin          Admin
+	Gorm           Gorm
+	Mysql          Mysql
+	Postgresql     Postgresql
+	Gin            Gin
+	Logger         Logger
+	Redis          Redis
+	Cache          Cache
+	Oss            Oss
+	Jwt            Jwt
+	Rustdesk       Rustdesk
+	Proxy          Proxy
+	Ldap           Ldap
+	DeviceIdentity DeviceIdentity `mapstructure:"device-identity"`
 }
 
 func (a *Admin) Init() {
