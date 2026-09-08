@@ -154,7 +154,7 @@ func (s *DeviceIdentityService) LoginWithDeviceIdentity(user *model.User, loginL
 			return err
 		}
 		tokenValue := (&UserService{}).GenerateToken(user)
-		token = &model.UserToken{UserId: user.Id, Token: tokenValue, DeviceUuid: loginLog.Uuid, DeviceId: identity.RustdeskId, ExpiredAt: (&UserService{}).UserTokenExpireTimestamp()}
+		token = &model.UserToken{UserId: user.Id, Token: tokenValue, DeviceUuid: loginLog.Uuid, DeviceId: identity.RustdeskId, ExpiredAt: (&UserService{}).UserTokenExpireTimestamp(), Managed: true}
 		if err = tx.Create(token).Error; err != nil {
 			return err
 		}

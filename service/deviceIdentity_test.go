@@ -210,7 +210,7 @@ func TestLoginWithDeviceIdentityCommitsMatchingTokenAndLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token.DeviceId != identity.RustdeskId || token.DeviceUuid != testOpaqueMachineUUID || credential == "" {
+	if token.DeviceId != identity.RustdeskId || token.DeviceUuid != testOpaqueMachineUUID || !token.Managed || credential == "" {
 		t.Fatalf("inconsistent login result: token=%+v identity=%+v", token, identity)
 	}
 	var log model.LoginLog

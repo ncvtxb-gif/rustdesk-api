@@ -24,7 +24,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const DatabaseVersion = 267
+const DatabaseVersion = 268
 
 // @title 管理系统API
 // @version 1.0
@@ -366,5 +366,32 @@ func migrateSchemaAndRecordVersion(db *gorm.DB, version uint, models ...interfac
 	if err := db.AutoMigrate(models...); err != nil {
 		return err
 	}
+	if err := backfillManagedUserTokens(db, global.Config.DeviceIdentity.EnterpriseClientType); err != nil {
+		return err
+	}
 	return db.Create(&model.Version{Version: version}).Error
+}
+
+func backfillManagedUserTokens(db *gorm.DB, enterpriseClientType string) error {
+	if !db.Migrator().HasTable(&model.UserToken{}) || !db.Migrator().HasColumn(&model.UserToken{}, "Managed") {
+		return nil
+	}
+	if db.Migrator().HasTable(&model.DeviceIdentity{}) {
+		identityMatch := db.Model(&model.DeviceIdentity{}).Select("1").Where(
+			"device_identities.user_id = user_tokens.user_id AND device_identities.machine_uuid = user_tokens.device_uuid AND device_identities.rustdesk_id = user_tokens.device_id",
+		)
+		if err := db.Model(&model.UserToken{}).Where("EXISTS (?)", identityMatch).Update("managed", true).Error; err != nil {
+			return err
+		}
+	}
+	if enterpriseClientType != "" && db.Migrator().HasTable(&model.LoginLog{}) {
+		loginMatch := db.Model(&model.LoginLog{}).Select("1").Where(
+			"login_logs.user_token_id = user_tokens.id AND login_logs.user_id = user_tokens.user_id AND login_logs.client = ? AND login_logs.platform = ? AND login_logs.type = ? AND login_logs.uuid = user_tokens.device_uuid AND login_logs.device_id = user_tokens.device_id",
+			enterpriseClientType, "windows", model.LoginLogTypeOauth,
+		)
+		if err := db.Model(&model.UserToken{}).Where("EXISTS (?)", loginMatch).Update("managed", true).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -7,6 +7,7 @@ type UserToken struct {
 	DeviceId   string `json:"device_id" gorm:"default:'';omitempty;"`
 	Token      string `json:"token" gorm:"default:'';not null;index"`
 	ExpiredAt  int64  `json:"expired_at" gorm:"default:0;not null;"`
+	Managed    bool   `json:"-" gorm:"default:false;not null;index"`
 	TimeModel
 }
 

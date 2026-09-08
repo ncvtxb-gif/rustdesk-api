@@ -201,7 +201,7 @@ func TestBootstrapRejectsInactiveAndArchivedEnterpriseIdentity(t *testing.T) {
 func TestManagedTokenWithoutIdentityDoesNotRefresh(t *testing.T) {
 	_, db := newDeviceIdentityTestService(t)
 	oldExpiry := time.Now().Unix() + 60
-	token := &model.UserToken{UserId: 7, DeviceUuid: testOpaqueMachineUUID, DeviceId: "123456789", Token: "missing-managed-identity", ExpiredAt: oldExpiry}
+	token := &model.UserToken{UserId: 7, DeviceUuid: testOpaqueMachineUUID, DeviceId: "123456789", Token: "missing-managed-identity", ExpiredAt: oldExpiry, Managed: true}
 	if err := db.Create(token).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -209,6 +209,9 @@ func TestManagedTokenWithoutIdentityDoesNotRefresh(t *testing.T) {
 		UserId: token.UserId, UserTokenId: token.Id, Client: "enterprise-windows",
 		Platform: "windows", Type: model.LoginLogTypeOauth, Uuid: token.DeviceUuid, DeviceId: token.DeviceId,
 	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("user_token_id = ?", token.Id).Delete(&model.LoginLog{}).Error; err != nil {
 		t.Fatal(err)
 	}
 	oldDB, oldConfig := DB, Config
