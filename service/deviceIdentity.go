@@ -131,7 +131,7 @@ func (s *DeviceIdentityService) AllocateOrGetDeviceIdentity(db *gorm.DB, userID 
 }
 
 func (s *DeviceIdentityService) LoginWithDeviceIdentity(user *model.User, loginLog *model.LoginLog) (*model.UserToken, *model.DeviceIdentity, string, error) {
-	canonicalUUID, err := CanonicalMachineUUID(loginLog.Uuid)
+	canonicalUUID, err := NormalizeMachineUUID(loginLog.Uuid)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -168,12 +168,16 @@ func (s *DeviceIdentityService) LoginWithDeviceIdentity(user *model.User, loginL
 	return token, identity, credential, nil
 }
 
-func CanonicalMachineUUID(machineUUID string) (string, error) {
-	parsed, err := uuid.Parse(strings.TrimSpace(machineUUID))
-	if err != nil {
+func NormalizeMachineUUID(machineUUID string) (string, error) {
+	machineUUID = strings.TrimSpace(machineUUID)
+	if len(machineUUID) < 8 || len(machineUUID) > 512 {
 		return "", ErrMachineUUIDRequired
 	}
-	return parsed.String(), nil
+	decoded, err := base64.StdEncoding.DecodeString(machineUUID)
+	if err != nil || len(decoded) == 0 || len(decoded) > 256 {
+		return "", ErrMachineUUIDRequired
+	}
+	return machineUUID, nil
 }
 
 func (s *DeviceIdentityService) encryptCredential(identity *model.DeviceIdentity, credential string) error {
@@ -230,7 +234,7 @@ func (s *DeviceIdentityService) SetAuthenticationHash(db *gorm.DB, userID uint, 
 }
 
 func (s *DeviceIdentityService) managedIdentityForToken(db *gorm.DB, userID uint, tokenValue, requestedUUID string) (*model.DeviceIdentity, error) {
-	canonicalRequested, err := CanonicalMachineUUID(requestedUUID)
+	canonicalRequested, err := NormalizeMachineUUID(requestedUUID)
 	if err != nil {
 		return nil, ErrManagedDeviceUnauthorized
 	}
@@ -238,7 +242,7 @@ func (s *DeviceIdentityService) managedIdentityForToken(db *gorm.DB, userID uint
 	if err := db.Where("user_id = ? AND token = ?", userID, tokenValue).First(&token).Error; err != nil {
 		return nil, ErrManagedDeviceUnauthorized
 	}
-	canonicalToken, err := CanonicalMachineUUID(token.DeviceUuid)
+	canonicalToken, err := NormalizeMachineUUID(token.DeviceUuid)
 	if err != nil || canonicalToken != canonicalRequested || token.DeviceId == "" || (token.ExpiredAt > 0 && token.ExpiredAt <= time.Now().Unix()) {
 		return nil, ErrManagedDeviceUnauthorized
 	}
@@ -249,16 +253,20 @@ func (s *DeviceIdentityService) managedIdentityForToken(db *gorm.DB, userID uint
 	return &identity, nil
 }
 
-func (s *DeviceIdentityService) BootstrapForToken(db *gorm.DB, userID uint, tokenValue, machineUUID string) (*model.DeviceIdentity, string, error) {
+func (s *DeviceIdentityService) BootstrapForToken(db *gorm.DB, userID uint, tokenValue, machineUUID string) (*model.DeviceIdentity, string, int64, error) {
 	identity, err := s.managedIdentityForToken(db, userID, tokenValue, machineUUID)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	credential, err := s.DecryptCredential(identity)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
-	return identity, credential, nil
+	var token model.UserToken
+	if err := db.Select("expired_at").Where("user_id = ? AND token = ?", userID, tokenValue).First(&token).Error; err != nil {
+		return nil, "", 0, ErrManagedDeviceUnauthorized
+	}
+	return identity, credential, token.ExpiredAt, nil
 }
 
 func (s *DeviceIdentityService) SetAuthenticationHashForToken(db *gorm.DB, userID uint, tokenValue, wireHash string) error {

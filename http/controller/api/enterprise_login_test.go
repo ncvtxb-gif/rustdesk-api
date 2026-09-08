@@ -66,7 +66,7 @@ func TestLoginResponseOmitsDeviceForLegacyClients(t *testing.T) {
 
 func TestEnterpriseLoginResponseIncludesManagedIdentity(t *testing.T) {
 	b, err := json.Marshal(response.LoginRes{Type: "access_token", AccessToken: "token", Device: &response.DeviceIdentityPayload{
-		RustdeskId: "123456789", PermanentPassword: "hidden-credential", PasswordVersion: 1, Status: "active",
+		RustdeskId: "123456789", PasswordVersion: 1, Status: "active",
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,10 @@ func TestEnterpriseLoginResponseIncludesManagedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	device, ok := payload["device"].(map[string]interface{})
-	if !ok || device["rustdesk_id"] != "123456789" || device["permanent_password"] != "hidden-credential" || device["password_version"] != float64(1) || device["status"] != "active" {
+	if !ok || device["rustdesk_id"] != "123456789" || device["password_version"] != float64(1) || device["status"] != "active" {
 		t.Fatalf("unexpected enterprise device payload: %s", b)
+	}
+	if _, exists := device["permanent_password"]; exists {
+		t.Fatalf("OIDC login leaked permanent password: %s", b)
 	}
 }

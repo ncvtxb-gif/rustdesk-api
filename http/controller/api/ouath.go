@@ -41,7 +41,7 @@ func (o *Oauth) OidcAuth(c *gin.Context) {
 	}
 	enterprise := isEnterpriseWindowsCandidate(&global.Config.DeviceIdentity, f)
 	if enterprise {
-		canonicalUUID, err := service.CanonicalMachineUUID(f.Uuid)
+		canonicalUUID, err := service.NormalizeMachineUUID(f.Uuid)
 		if err != nil {
 			response.Error(c, response.TranslateMsg(c, "ParamsError")+": machine UUID is required")
 			return
@@ -168,7 +168,7 @@ func (o *Oauth) oidcAuthQueryPre(c *gin.Context) (*model.User, *model.UserToken,
 // @Failure 500 {object} response.ErrorResponse
 // @Router /oidc/auth-query [get]
 func (o *Oauth) OidcAuthQuery(c *gin.Context) {
-	u, ut, identity, credential := o.oidcAuthQueryPre(c)
+	u, ut, identity, _ := o.oidcAuthQueryPre(c)
 	if u == nil || ut == nil {
 		return
 	}
@@ -178,7 +178,7 @@ func (o *Oauth) OidcAuthQuery(c *gin.Context) {
 		User:        *(&apiResp.UserPayload{}).FromUser(u),
 	}
 	if identity != nil {
-		res.Device = &apiResp.DeviceIdentityPayload{RustdeskId: identity.RustdeskId, PermanentPassword: credential, PasswordVersion: identity.CredentialVersion, Status: identity.Status}
+		res.Device = &apiResp.DeviceIdentityPayload{RustdeskId: identity.RustdeskId, PasswordVersion: identity.CredentialVersion, Status: identity.Status}
 	}
 	c.JSON(http.StatusOK, res)
 }

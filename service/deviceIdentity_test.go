@@ -172,7 +172,7 @@ func TestAllocateOrGetDeviceIdentityProducesGloballyUniqueIDs(t *testing.T) {
 
 func TestLoginWithDeviceIdentityRollsBackTokenWhenIdentityIsArchived(t *testing.T) {
 	svc, db := newDeviceIdentityTestService(t)
-	const machine = "550e8400-e29b-41d4-a716-446655440000"
+	const machine = testOpaqueMachineUUID
 	identity, _ := allocateIdentity(t, svc, db, 7, machine)
 	if err := db.Model(identity).Update("status", model.DeviceIdentityStatusArchived).Error; err != nil {
 		t.Fatal(err)
@@ -206,11 +206,11 @@ func TestLoginWithDeviceIdentityCommitsMatchingTokenAndLog(t *testing.T) {
 	AllService = &Service{DeviceIdentityService: svc}
 	t.Cleanup(func() { DB, AllService, Config, Jwt = oldDB, oldServices, oldConfig, oldJWT })
 	user := &model.User{IdModel: model.IdModel{Id: 7}, Username: "feishu-user"}
-	token, identity, credential, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 7, Uuid: "550e8400-e29b-41d4-a716-446655440000", Client: "enterprise-windows", Platform: "windows"})
+	token, identity, credential, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 7, Uuid: testOpaqueMachineUUID, Client: "enterprise-windows", Platform: "windows"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token.DeviceId != identity.RustdeskId || token.DeviceUuid != "550e8400-e29b-41d4-a716-446655440000" || credential == "" {
+	if token.DeviceId != identity.RustdeskId || token.DeviceUuid != testOpaqueMachineUUID || credential == "" {
 		t.Fatalf("inconsistent login result: token=%+v identity=%+v", token, identity)
 	}
 	var log model.LoginLog
@@ -224,7 +224,7 @@ func TestLoginWithDeviceIdentityCommitsMatchingTokenAndLog(t *testing.T) {
 
 func TestLoginWithDeviceIdentityMakesOtherAccountOnMachineInactive(t *testing.T) {
 	svc, db := newDeviceIdentityTestService(t)
-	const machine = "550e8400-e29b-41d4-a716-446655440000"
+	const machine = testOpaqueMachineUUID
 	first, _ := allocateIdentity(t, svc, db, 7, machine)
 	oldDB, oldServices, oldConfig, oldJWT := DB, AllService, Config, Jwt
 	DB = db
@@ -253,12 +253,12 @@ func TestLoginWithDeviceIdentityCanonicalizesUUIDAndRevokesOtherAccountTokens(t 
 	AllService = &Service{DeviceIdentityService: svc}
 	t.Cleanup(func() { DB, AllService, Config, Jwt = oldDB, oldServices, oldConfig, oldJWT })
 
-	const canonical = "550e8400-e29b-41d4-a716-446655440000"
+	const canonical = testOpaqueMachineUUID
 	if err := db.Create(&model.UserToken{UserId: 7, DeviceUuid: canonical, DeviceId: "old-id", Token: "old-token"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	user := &model.User{IdModel: model.IdModel{Id: 8}, Username: "second-user"}
-	token, identity, _, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 8, Uuid: "{550E8400-E29B-41D4-A716-446655440000}", Client: "enterprise-windows", Platform: "windows"})
+	token, identity, _, err := svc.LoginWithDeviceIdentity(user, &model.LoginLog{UserId: 8, Uuid: "  " + canonical + "  ", Client: "enterprise-windows", Platform: "windows"})
 	if err != nil {
 		t.Fatal(err)
 	}

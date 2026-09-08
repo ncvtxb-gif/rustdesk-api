@@ -60,8 +60,17 @@ type LoginRes struct {
 
 type DeviceIdentityPayload struct {
 	RustdeskId        string `json:"rustdesk_id"`
-	PermanentPassword string `json:"permanent_password"`
+	PermanentPassword string `json:"permanent_password,omitempty"`
 	PasswordVersion   uint   `json:"password_version"`
 	Status            string `json:"status"`
 	MachineUuid       string `json:"machine_uuid,omitempty"`
+}
+
+type ManagedDeviceBootstrapPayload struct {
+	RustdeskId        string `json:"rustdesk_id"`
+	PermanentPassword string `json:"permanent_password"`
+	PasswordVersion   uint   `json:"password_version"`
+	Status            string `json:"status"`
+	MachineUuid       string `json:"machine_uuid"`
+	SessionExpiresAt  int64  `json:"session_expires_at"`
 }

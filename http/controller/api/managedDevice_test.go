@@ -35,7 +35,7 @@ func newControllerDeviceIdentityService(t *testing.T) (*service.DeviceIdentitySe
 
 func TestSetManagedDeviceAuthenticationHashUsesAuthenticatedTokenIdentity(t *testing.T) {
 	identityService, db := newControllerDeviceIdentityService(t)
-	const machine = "550e8400-e29b-41d4-a716-446655440000"
+	const machine = "YTFhMmIzYzQtZDVlNi00ZjcwLTgxOTItYTNkNGU1ZjYwNzE4"
 	identity, _, err := identityService.AllocateOrGetDeviceIdentity(db, 7, machine, service.DeviceInfo{})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestSetManagedDeviceAuthenticationHashUsesAuthenticatedTokenIdentity(t *tes
 
 func TestManagedDeviceBootstrapReturnsOnlyAuthenticatedTokenIdentity(t *testing.T) {
 	identityService, db := newControllerDeviceIdentityService(t)
-	const machine = "550e8400-e29b-41d4-a716-446655440000"
+	const machine = "YTFhMmIzYzQtZDVlNi00ZjcwLTgxOTItYTNkNGU1ZjYwNzE4"
 	identity, credential, err := identityService.AllocateOrGetDeviceIdentity(db, 7, machine, service.DeviceInfo{})
 	if err != nil {
 		t.Fatal(err)
@@ -92,13 +92,13 @@ func TestManagedDeviceBootstrapReturnsOnlyAuthenticatedTokenIdentity(t *testing.
 		c.Set("token", "access-token")
 	})
 	router.POST("/api/managed-device/bootstrap", (&ManagedDevice{}).Bootstrap)
-	req := httptest.NewRequest(http.MethodPost, "/api/managed-device/bootstrap", bytes.NewBufferString(`{"machine_uuid":"{550E8400-E29B-41D4-A716-446655440000}","platform":"windows"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/managed-device/bootstrap", bytes.NewBufferString(`{"machine_uuid":"`+machine+`","platform":"windows"}`))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("unexpected response: %d %s", recorder.Code, recorder.Body.String())
 	}
-	for _, want := range []string{identity.RustdeskId, credential, machine, `"status":"active"`} {
+	for _, want := range []string{identity.RustdeskId, credential, machine, `"status":"active"`, `"session_expires_at":4102444800`} {
 		if !bytes.Contains(recorder.Body.Bytes(), []byte(want)) {
 			t.Fatalf("bootstrap response %q missing %q", recorder.Body.String(), want)
 		}

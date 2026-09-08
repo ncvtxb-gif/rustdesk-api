@@ -55,13 +55,13 @@ func (m *ManagedDevice) Bootstrap(c *gin.Context) {
 		response.Error(c, response.TranslateMsg(c, "NoAccess"))
 		return
 	}
-	identity, credential, err := service.AllService.DeviceIdentityService.BootstrapForToken(service.DB, user.Id, token, form.MachineUUID)
+	identity, credential, expiresAt, err := service.AllService.DeviceIdentityService.BootstrapForToken(service.DB, user.Id, token, form.MachineUUID)
 	if err != nil {
 		response.Error(c, response.TranslateMsg(c, "NoAccess"))
 		return
 	}
-	c.JSON(http.StatusOK, &apiResp.DeviceIdentityPayload{
+	c.JSON(http.StatusOK, &apiResp.ManagedDeviceBootstrapPayload{
 		RustdeskId: identity.RustdeskId, PermanentPassword: credential, PasswordVersion: identity.CredentialVersion,
-		Status: identity.Status, MachineUuid: identity.MachineUuid,
+		Status: identity.Status, MachineUuid: identity.MachineUuid, SessionExpiresAt: expiresAt,
 	})
 }
