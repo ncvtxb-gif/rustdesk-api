@@ -502,9 +502,33 @@ func (us *UserService) RefreshAccessToken(ut *model.UserToken) {
 }
 
 func (us *UserService) AutoRefreshAccessToken(ut *model.UserToken) {
+	if !us.enterpriseTokenMayRefresh(ut) {
+		return
+	}
 	if ut.ExpiredAt-time.Now().Unix() < Config.App.TokenExpire.Milliseconds()/3000 {
 		us.RefreshAccessToken(ut)
 	}
+}
+
+// enterpriseTokenMayRefresh keeps archived and inactive managed devices from
+// extending their session merely by continuing to call an authenticated API.
+// Tokens without a managed identity retain the legacy refresh behaviour.
+func (us *UserService) enterpriseTokenMayRefresh(ut *model.UserToken) bool {
+	if ut == nil || ut.DeviceUuid == "" || ut.DeviceId == "" {
+		return true
+	}
+	var identity model.DeviceIdentity
+	err := DB.Select("status").Where(
+		"user_id = ? AND machine_uuid = ? AND rustdesk_id = ?",
+		ut.UserId, ut.DeviceUuid, ut.DeviceId,
+	).First(&identity).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	return identity.Status == model.DeviceIdentityStatusActive
 }
 
 func (us *UserService) BatchDeleteUserToken(ids []uint) error {
