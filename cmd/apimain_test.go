@@ -31,6 +31,22 @@ func TestMigrationFailureDoesNotRecordVersion(t *testing.T) {
 	}
 }
 
+func TestMigrationCreatesCompanyAddressBookUniqueIndexes(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateSchemaAndRecordVersion(db, 269, &model.Version{}, &model.AddressBook{}, &model.AddressBookCollectionRule{}); err != nil {
+		t.Fatal(err)
+	}
+	if !db.Migrator().HasIndex(&model.AddressBook{}, "idx_address_book_identity") {
+		t.Fatal("address-book identity unique index was not created")
+	}
+	if !db.Migrator().HasIndex(&model.AddressBookCollectionRule{}, "idx_address_book_rule_identity") {
+		t.Fatal("address-book rule identity unique index was not created")
+	}
+}
+
 func TestBackfillManagedUserTokensSurvivesLoginLogDeletion(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
