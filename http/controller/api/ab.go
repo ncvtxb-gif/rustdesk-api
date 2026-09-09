@@ -548,7 +548,7 @@ func (a *Ab) Peers(c *gin.Context) {
 		return
 	}
 
-	al := service.AllService.AddressBookService.ListByUserIdAndCollectionId(uid, cid, 1, 1000)
+	al := service.AllService.AddressBookService.ListVisibleByUserAndCollection(u, uid, cid, 1, 1000)
 	c.JSON(http.StatusOK, gin.H{
 		"total":            al.Total,
 		"data":             al.AddressBooks,

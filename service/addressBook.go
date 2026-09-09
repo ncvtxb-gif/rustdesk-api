@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/google/uuid"
 	"github.com/lejianwen/rustdesk-api/v2/model"
 	"gorm.io/gorm"
@@ -10,6 +11,8 @@ import (
 
 type AddressBookService struct {
 }
+
+const CompanyAddressBookName = "Sweetnight-PC"
 
 func (s *AddressBookService) Info(id string) *model.AddressBook {
 	p := &model.AddressBook{}
@@ -185,6 +188,78 @@ func (s *AddressBookService) ListByUserIdAndCollectionId(userId, cid, page, page
 	})
 	return
 }
+
+// ListVisibleByUserAndCollection keeps the managed company collection useful
+// to administrators while limiting normal users to devices currently bound to
+// their own account.
+func (s *AddressBookService) ListVisibleByUserAndCollection(viewer *model.User, ownerId, cid, page, pageSize uint) *model.AddressBookList {
+	collection := s.CollectionInfoById(cid)
+	if collection.Id == 0 || collection.Name != CompanyAddressBookName || viewer == nil || (viewer.IsAdmin != nil && *viewer.IsAdmin) {
+		return s.ListByUserIdAndCollectionId(ownerId, cid, page, pageSize)
+	}
+	return s.List(page, pageSize, func(tx *gorm.DB) {
+		tx.Joins("JOIN peers ON peers.id = address_books.id").
+			Where("address_books.user_id = ? AND address_books.collection_id = ? AND peers.user_id = ?", ownerId, cid, viewer.Id)
+	})
+}
+
+// EnsureCompanyDevice adds or refreshes the device allocated during desktop
+// login. The company collection must be unique so a configuration mistake can
+// never place a device in an arbitrary address book.
+func (s *AddressBookService) EnsureCompanyDevice(user *model.User, deviceId string) error {
+	if user == nil || user.Id == 0 || strings.TrimSpace(deviceId) == "" {
+		return errors.New("company device requires a user and device ID")
+	}
+	var collections []*model.AddressBookCollection
+	if err := DB.Where("name = ?", CompanyAddressBookName).Find(&collections).Error; err != nil {
+		return err
+	}
+	if len(collections) != 1 {
+		return errors.New("exactly one company address book collection is required")
+	}
+	collection := collections[0]
+	ruleLevel := model.ShareAddressBookRuleRuleRead
+	if user.IsAdmin != nil && *user.IsAdmin {
+		ruleLevel = model.ShareAddressBookRuleRuleFullControl
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var rule model.AddressBookCollectionRule
+		err := tx.Where("type = ? AND to_id = ? AND collection_id = ?", model.ShareAddressBookRuleTypePersonal, user.Id, collection.Id).First(&rule).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			rule = model.AddressBookCollectionRule{UserId: collection.UserId, CollectionId: collection.Id, Rule: ruleLevel, Type: model.ShareAddressBookRuleTypePersonal, ToId: user.Id}
+			if err := tx.Create(&rule).Error; err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else if rule.Rule != ruleLevel || rule.UserId != collection.UserId {
+			if err := tx.Model(&rule).Updates(map[string]interface{}{"rule": ruleLevel, "user_id": collection.UserId}).Error; err != nil {
+				return err
+			}
+		}
+
+		displayName := strings.TrimSpace(user.Nickname)
+		if displayName == "" {
+			displayName = user.Username
+		}
+		var entry model.AddressBook
+		err = tx.Where("collection_id = ? AND id = ?", collection.Id, deviceId).First(&entry).Error
+		if err == nil {
+			return tx.Model(&entry).Updates(map[string]interface{}{"username": displayName, "user_id": collection.UserId}).Error
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		entry = model.AddressBook{Id: deviceId, Username: displayName, UserId: collection.UserId, CollectionId: collection.Id}
+		peer := &model.Peer{}
+		if err := tx.Where("id = ?", deviceId).First(peer).Error; err == nil {
+			entry.Platform = s.PlatformFromOs(peer.Os)
+			entry.Hostname = peer.Hostname
+		}
+		return tx.Create(&entry).Error
+	})
+}
 func (s *AddressBookService) ListCollection(page, pageSize uint, where func(tx *gorm.DB)) (res *model.AddressBookCollectionList) {
 	res = &model.AddressBookCollectionList{}
 	res.Page = int64(page)
@@ -231,6 +306,10 @@ func (s *AddressBookService) CollectionReadRules(user *model.User) (res []*model
 }
 
 func (s *AddressBookService) UserMaxRule(user *model.User, uid, cid uint) int {
+	collection := s.CollectionInfoById(cid)
+	if collection.Id != 0 && collection.Name == CompanyAddressBookName && user != nil && (user.IsAdmin == nil || !*user.IsAdmin) {
+		return model.ShareAddressBookRuleRuleRead
+	}
 	// ismy?
 	if user.Id == uid {
 		return model.ShareAddressBookRuleRuleFullControl

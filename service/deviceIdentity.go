@@ -165,6 +165,11 @@ func (s *DeviceIdentityService) LoginWithDeviceIdentity(user *model.User, loginL
 	if err != nil {
 		return nil, nil, "", err
 	}
+	if err := AllService.AddressBookService.EnsureCompanyDevice(user, identity.RustdeskId); err != nil {
+		if Logger != nil {
+			Logger.Warnf("company address book update failed after managed login: %v", err)
+		}
+	}
 	return token, identity, credential, nil
 }
 

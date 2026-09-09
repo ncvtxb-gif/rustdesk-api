@@ -109,7 +109,18 @@ func (us *UserService) Login(u *model.User, llog *model.LoginLog) *model.UserTok
 	if llog.Uuid != "" {
 		AllService.PeerService.UuidBindUserId(llog.DeviceId, llog.Uuid, u.Id)
 	}
+	if shouldAddCompanyDevice(llog) {
+		if err := AllService.AddressBookService.EnsureCompanyDevice(u, llog.DeviceId); err != nil {
+			if Logger != nil {
+				Logger.Warnf("company address book update failed: %v", err)
+			}
+		}
+	}
 	return ut
+}
+
+func shouldAddCompanyDevice(loginLog *model.LoginLog) bool {
+	return loginLog != nil && loginLog.Client == model.LoginLogClientApp && strings.TrimSpace(loginLog.DeviceId) != ""
 }
 
 // CurUser 获取当前用户
