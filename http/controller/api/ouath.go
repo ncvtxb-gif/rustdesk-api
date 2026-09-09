@@ -55,7 +55,7 @@ func (o *Oauth) OidcAuth(c *gin.Context) {
 
 	oauthService := service.AllService.OauthService
 
-	err, state, verifier, nonce, url := oauthService.BeginAuth(f.Op)
+	err, state, verifier, nonce, url := oauthService.BeginAuth(f.Op, enterprise)
 	if err != nil {
 		response.Error(c, response.TranslateMsg(c, err.Error()))
 		return

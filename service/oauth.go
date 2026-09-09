@@ -96,7 +96,15 @@ func (os *OauthService) DeleteOauthCache(key string) {
 	OauthCache.Delete(key)
 }
 
-func (os *OauthService) BeginAuth(op string) (error error, state, verifier, nonce, url string) {
+func oauthAuthCodeOptions(nonce string, forceReauthentication bool) []oauth2.AuthCodeOption {
+	extras := []oauth2.AuthCodeOption{oauth2.SetAuthURLParam("nonce", nonce)}
+	if forceReauthentication {
+		extras = append(extras, oauth2.SetAuthURLParam("prompt", "login"))
+	}
+	return extras
+}
+
+func (os *OauthService) BeginAuth(op string, forceReauthentication bool) (error error, state, verifier, nonce, url string) {
 	state = utils.RandomString(10) + strconv.FormatInt(time.Now().Unix(), 10)
 	verifier = ""
 	nonce = ""
@@ -107,10 +115,8 @@ func (os *OauthService) BeginAuth(op string) (error error, state, verifier, nonc
 	}
 	err, oauthInfo, oauthConfig, _ := os.GetOauthConfig(op)
 	if err == nil {
-		extras := make([]oauth2.AuthCodeOption, 0, 3)
-
 		nonce = utils.RandomString(10)
-		extras = append(extras, oauth2.SetAuthURLParam("nonce", nonce))
+		extras := oauthAuthCodeOptions(nonce, forceReauthentication)
 
 		if oauthInfo.PkceEnable != nil && *oauthInfo.PkceEnable {
 			extras = append(extras, oauth2.AccessTypeOffline)
