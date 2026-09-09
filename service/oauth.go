@@ -182,30 +182,11 @@ func (os *OauthService) GetOauthConfig(op string) (err error, oauthInfo *model.O
 	// 	RedirectURL:  Config.Rustdesk.ApiServer + "/api/oidc/callback",
 	// }
 
-
-
-
-	// --- 修改开始 ---
-	// 强制处理 ApiServer 地址，确保它是一个带 http:// 的完整 URL
-	redirectHost := Config.Rustdesk.ApiServer
-	// 如果地址已经带有 https://，为了保险我们也把它替换成 http://，或者直接补全 http://
-	if strings.HasPrefix(redirectHost, "https://") {
-	    redirectHost = strings.Replace(redirectHost, "https://", "http://", 1)
-	} else if !strings.HasPrefix(redirectHost, "http://") {
-	    redirectHost = "http://" + redirectHost
-	}
-	
 	oauthConfig = &oauth2.Config{
-	    ClientID:     oauthInfo.ClientId,
-	    ClientSecret: oauthInfo.ClientSecret,
-	    RedirectURL:  redirectHost + "/api/oidc/callback",
+		ClientID:     oauthInfo.ClientId,
+		ClientSecret: oauthInfo.ClientSecret,
+		RedirectURL:  oauthRedirectURL(Config.Rustdesk.ApiServer),
 	}
-	// --- 修改结束 ---	
-
-
-
-
-	
 
 	// Maybe should validate the oauthConfig here
 	oauthType := oauthInfo.OauthType
@@ -236,6 +217,10 @@ func (os *OauthService) GetOauthConfig(op string) (err error, oauthInfo *model.O
 		return errors.New("unsupported OAuth type"), nil, nil, nil
 	}
 	return nil, oauthInfo, oauthConfig, provider
+}
+
+func oauthRedirectURL(apiServer string) string {
+	return strings.TrimRight(apiServer, "/") + "/api/oidc/callback"
 }
 
 func getHTTPClientWithProxy() *http.Client {
