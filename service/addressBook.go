@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lejianwen/rustdesk-api/v2/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"strings"
 )
 
@@ -224,40 +225,31 @@ func (s *AddressBookService) EnsureCompanyDevice(user *model.User, deviceId stri
 	}
 
 	return DB.Transaction(func(tx *gorm.DB) error {
-		var rule model.AddressBookCollectionRule
-		err := tx.Where("type = ? AND to_id = ? AND collection_id = ?", model.ShareAddressBookRuleTypePersonal, user.Id, collection.Id).First(&rule).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			rule = model.AddressBookCollectionRule{UserId: collection.UserId, CollectionId: collection.Id, Rule: ruleLevel, Type: model.ShareAddressBookRuleTypePersonal, ToId: user.Id}
-			if err := tx.Create(&rule).Error; err != nil {
-				return err
-			}
-		} else if err != nil {
+		rule := model.AddressBookCollectionRule{UserId: collection.UserId, CollectionId: collection.Id, Rule: ruleLevel, Type: model.ShareAddressBookRuleTypePersonal, ToId: user.Id}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "type"}, {Name: "to_id"}, {Name: "collection_id"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{"rule": ruleLevel, "user_id": collection.UserId}),
+		}).Create(&rule).Error; err != nil {
 			return err
-		} else if rule.Rule != ruleLevel || rule.UserId != collection.UserId {
-			if err := tx.Model(&rule).Updates(map[string]interface{}{"rule": ruleLevel, "user_id": collection.UserId}).Error; err != nil {
-				return err
-			}
 		}
 
 		displayName := strings.TrimSpace(user.Nickname)
 		if displayName == "" {
 			displayName = user.Username
 		}
-		var entry model.AddressBook
-		err = tx.Where("collection_id = ? AND id = ?", collection.Id, deviceId).First(&entry).Error
-		if err == nil {
-			return tx.Model(&entry).Updates(map[string]interface{}{"username": displayName, "user_id": collection.UserId}).Error
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		entry = model.AddressBook{Id: deviceId, Username: displayName, UserId: collection.UserId, CollectionId: collection.Id}
+		entry := model.AddressBook{Id: deviceId, Username: displayName, UserId: collection.UserId, CollectionId: collection.Id}
+		updates := map[string]interface{}{"username": displayName}
 		peer := &model.Peer{}
 		if err := tx.Where("id = ?", deviceId).First(peer).Error; err == nil {
 			entry.Platform = s.PlatformFromOs(peer.Os)
 			entry.Hostname = peer.Hostname
+			updates["platform"] = entry.Platform
+			updates["hostname"] = entry.Hostname
 		}
-		return tx.Create(&entry).Error
+		return tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}, {Name: "collection_id"}, {Name: "id"}},
+			DoUpdates: clause.Assignments(updates),
+		}).Create(&entry).Error
 	})
 }
 func (s *AddressBookService) ListCollection(page, pageSize uint, where func(tx *gorm.DB)) (res *model.AddressBookCollectionList) {
@@ -302,12 +294,22 @@ func (s *AddressBookService) CollectionReadRules(user *model.User) (res []*model
 	tx3 := DB.Model(&model.AddressBookCollectionRule{})
 	tx3.Where("type = ? and to_id = ? and rule > 0", model.ShareAddressBookRuleTypeGroup, user.GroupId).Find(&groupRules)
 	res = append(res, groupRules...)
+	if user != nil && user.IsAdmin != nil && *user.IsAdmin {
+		var companyCollections []*model.AddressBookCollection
+		DB.Where("name = ? AND user_id <> ?", CompanyAddressBookName, user.Id).Find(&companyCollections)
+		for _, collection := range companyCollections {
+			res = append(res, &model.AddressBookCollectionRule{UserId: collection.UserId, CollectionId: collection.Id, Rule: model.ShareAddressBookRuleRuleFullControl})
+		}
+	}
 	return
 }
 
 func (s *AddressBookService) UserMaxRule(user *model.User, uid, cid uint) int {
 	collection := s.CollectionInfoById(cid)
-	if collection.Id != 0 && collection.Name == CompanyAddressBookName && user != nil && (user.IsAdmin == nil || !*user.IsAdmin) {
+	if collection.Id != 0 && collection.Name == CompanyAddressBookName && user != nil {
+		if user.IsAdmin != nil && *user.IsAdmin {
+			return model.ShareAddressBookRuleRuleFullControl
+		}
 		return model.ShareAddressBookRuleRuleRead
 	}
 	// ismy?

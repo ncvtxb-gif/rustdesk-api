@@ -20,7 +20,7 @@ import "github.com/lejianwen/rustdesk-api/v2/model/custom_types"
 // AddressBook 有些字段是Personal才会上传的
 type AddressBook struct {
 	RowId            uint                   `gorm:"primaryKey" json:"row_id"`
-	Id               string                 `json:"id" gorm:"default:0;not null;index"`
+	Id               string                 `json:"id" gorm:"default:0;not null;index;uniqueIndex:idx_address_book_identity,priority:3"`
 	Username         string                 `json:"username" gorm:"default:'';not null;"`
 	Password         string                 `json:"password" gorm:"default:'';not null;"`
 	Hostname         string                 `json:"hostname" gorm:"default:'';not null;"`
@@ -28,14 +28,14 @@ type AddressBook struct {
 	Platform         string                 `json:"platform" gorm:"default:'';not null;"`
 	Tags             custom_types.AutoJson  `json:"tags" gorm:"not null;" swaggertype:"array,string"`
 	Hash             string                 `json:"hash" gorm:"default:'';not null;"`
-	UserId           uint                   `json:"user_id" gorm:"default:0;not null;index"`
+	UserId           uint                   `json:"user_id" gorm:"default:0;not null;index;uniqueIndex:idx_address_book_identity,priority:1"`
 	ForceAlwaysRelay bool                   `json:"forceAlwaysRelay" gorm:"default:0;not null;"`
 	RdpPort          string                 `json:"rdpPort" gorm:"default:'';not null;"`
 	RdpUsername      string                 `json:"rdpUsername" gorm:"default:'';not null;"`
 	Online           bool                   `json:"online" gorm:"default:0;not null;"`
 	LoginName        string                 `json:"loginName" gorm:"default:'';not null;"`
 	SameServer       bool                   `json:"sameServer" gorm:"default:0;not null;"`
-	CollectionId     uint                   `json:"collection_id" gorm:"default:0;not null;index"`
+	CollectionId     uint                   `json:"collection_id" gorm:"default:0;not null;index;uniqueIndex:idx_address_book_identity,priority:2"`
 	Collection       *AddressBookCollection `json:"collection,omitempty"`
 	TimeModel
 }
@@ -58,10 +58,10 @@ type AddressBookCollectionList struct {
 type AddressBookCollectionRule struct {
 	IdModel
 	UserId       uint `json:"user_id" gorm:"default:0;not null;"`
-	CollectionId uint `json:"collection_id" gorm:"default:0;not null;index" validate:"required"`
-	Rule         int  `json:"rule" gorm:"default:0;not null;" validate:"required,gte=1,lte=3"` // 0: 无 1: 读 2: 读写  3: 完全控制
-	Type         int  `json:"type" gorm:"default:1;not null;" validate:"required,gte=1,lte=2"` // 1: 个人 2: 群组
-	ToId         uint `json:"to_id" gorm:"default:0;not null;" validate:"required,gt=0"`
+	CollectionId uint `json:"collection_id" gorm:"default:0;not null;index;uniqueIndex:idx_address_book_rule_identity,priority:3" validate:"required"`
+	Rule         int  `json:"rule" gorm:"default:0;not null;" validate:"required,gte=1,lte=3"`                                                      // 0: 无 1: 读 2: 读写  3: 完全控制
+	Type         int  `json:"type" gorm:"default:1;not null;uniqueIndex:idx_address_book_rule_identity,priority:1" validate:"required,gte=1,lte=2"` // 1: 个人 2: 群组
+	ToId         uint `json:"to_id" gorm:"default:0;not null;uniqueIndex:idx_address_book_rule_identity,priority:2" validate:"required,gt=0"`
 	TimeModel
 }
 type AddressBookCollectionRuleList struct {

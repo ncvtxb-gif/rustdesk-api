@@ -93,6 +93,33 @@ func TestEnsureCompanyDeviceRefreshesDisplayNameAndDoesNotDuplicate(t *testing.T
 	}
 }
 
+func TestEnsureCompanyDeviceRefreshesPeerMetadataAfterBootstrap(t *testing.T) {
+	db := setupCompanyAddressBookTestDB(t)
+	owner := &model.User{Username: "owner", IsAdmin: testBool(true)}
+	user := &model.User{Username: "feishu-user", IsAdmin: testBool(false)}
+	db.Create(owner)
+	db.Create(user)
+	collection := &model.AddressBookCollection{UserId: owner.Id, Name: CompanyAddressBookName}
+	db.Create(collection)
+	svc := &AddressBookService{}
+	if err := svc.EnsureCompanyDevice(user, "123456789"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Peer{Id: "123456789", UserId: user.Id, Hostname: "DESKTOP-01", Os: "Windows 11"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureCompanyDevice(user, "123456789"); err != nil {
+		t.Fatal(err)
+	}
+	var entry model.AddressBook
+	if err := db.Where("collection_id = ? AND id = ?", collection.Id, "123456789").First(&entry).Error; err != nil {
+		t.Fatal(err)
+	}
+	if entry.Hostname != "DESKTOP-01" || entry.Platform != "Windows" {
+		t.Fatalf("peer metadata was not refreshed: %+v", entry)
+	}
+}
+
 func TestCompanyCollectionVisibilitySeparatesNormalUsers(t *testing.T) {
 	db := setupCompanyAddressBookTestDB(t)
 	owner := &model.User{Username: "owner", IsAdmin: testBool(true)}
@@ -129,6 +156,42 @@ func TestCompanyCollectionIsReadOnlyForNormalUsers(t *testing.T) {
 	db.Create(&model.AddressBookCollectionRule{UserId: owner.Id, CollectionId: collection.Id, ToId: user.Id, Type: model.ShareAddressBookRuleTypePersonal, Rule: model.ShareAddressBookRuleRuleFullControl})
 	if got := (&AddressBookService{}).UserMaxRule(user, owner.Id, collection.Id); got != model.ShareAddressBookRuleRuleRead {
 		t.Fatalf("normal user retained write access to company collection: %d", got)
+	}
+}
+
+func TestAdministratorAlwaysGetsCompanyCollectionFullControl(t *testing.T) {
+	db := setupCompanyAddressBookTestDB(t)
+	owner := &model.User{Username: "owner", IsAdmin: testBool(false)}
+	admin := &model.User{Username: "new-admin", IsAdmin: testBool(true)}
+	db.Create(owner)
+	db.Create(admin)
+	collection := &model.AddressBookCollection{UserId: owner.Id, Name: CompanyAddressBookName}
+	db.Create(collection)
+
+	if got := (&AddressBookService{}).UserMaxRule(admin, owner.Id, collection.Id); got != model.ShareAddressBookRuleRuleFullControl {
+		t.Fatalf("administrator without a persisted rule got permission %d", got)
+	}
+	rules := (&AddressBookService{}).CollectionReadRules(admin)
+	if len(rules) != 1 || rules[0].CollectionId != collection.Id || rules[0].Rule != model.ShareAddressBookRuleRuleFullControl {
+		t.Fatalf("administrator did not discover the company collection: %+v", rules)
+	}
+}
+
+func TestCompanyDeviceAndRuleCompositeKeysAreUnique(t *testing.T) {
+	db := setupCompanyAddressBookTestDB(t)
+	firstEntry := &model.AddressBook{Id: "123456789", UserId: 1, CollectionId: 2}
+	if err := db.Create(firstEntry).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AddressBook{Id: "123456789", UserId: 1, CollectionId: 2}).Error; err == nil {
+		t.Fatal("duplicate address-book identity was accepted")
+	}
+	firstRule := &model.AddressBookCollectionRule{UserId: 1, CollectionId: 2, ToId: 3, Type: model.ShareAddressBookRuleTypePersonal, Rule: model.ShareAddressBookRuleRuleRead}
+	if err := db.Create(firstRule).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AddressBookCollectionRule{UserId: 1, CollectionId: 2, ToId: 3, Type: model.ShareAddressBookRuleTypePersonal, Rule: model.ShareAddressBookRuleRuleRead}).Error; err == nil {
+		t.Fatal("duplicate address-book rule was accepted")
 	}
 }
 
