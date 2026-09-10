@@ -22,7 +22,8 @@ func TestManagedAuthenticationHashRequiresAdministrator(t *testing.T) {
 	}
 	oldDB, oldServices := service.DB, service.AllService
 	service.DB = db
-	service.AllService = &service.Service{UserService: &service.UserService{}, DeviceIdentityService: identityService}
+	// Production initializes the stateless embedded services as nil pointers.
+	service.AllService = &service.Service{DeviceIdentityService: identityService}
 	t.Cleanup(func() { service.DB, service.AllService = oldDB, oldServices })
 
 	admin := true

@@ -549,11 +549,23 @@ func (a *Ab) Peers(c *gin.Context) {
 	}
 
 	al := service.AllService.AddressBookService.ListVisibleByUserAndCollection(u, uid, cid, 1, 1000)
+	supplyManagedAddressBookHashes(u, al.AddressBooks)
 	c.JSON(http.StatusOK, gin.H{
 		"total":            al.Total,
 		"data":             al.AddressBooks,
 		"licensed_devices": 99999,
 	})
+}
+
+func supplyManagedAddressBookHashes(user *model.User, peers []*model.AddressBook) {
+	for _, peer := range peers {
+		if peer == nil {
+			continue
+		}
+		if managedHash := managedAuthenticationHash(user, peer.Id); managedHash != "" {
+			peer.Hash = managedHash
+		}
+	}
 }
 
 // PeerAdd

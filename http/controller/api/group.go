@@ -123,8 +123,8 @@ func (g *Group) Peers(c *gin.Context) {
 }
 
 func managedAuthenticationHash(user *model.User, rustdeskID string) string {
-	if user == nil || user.IsAdmin == nil || service.AllService == nil || service.AllService.UserService == nil ||
-		!service.AllService.UserService.IsAdmin(user) || service.AllService.DeviceIdentityService == nil {
+	if user == nil || user.IsAdmin == nil || !*user.IsAdmin || service.AllService == nil ||
+		service.AllService.DeviceIdentityService == nil {
 		return ""
 	}
 	return service.AllService.DeviceIdentityService.AuthenticationHashByRustdeskID(service.DB, rustdeskID)
