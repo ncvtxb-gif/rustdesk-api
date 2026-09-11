@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/lejianwen/rustdesk-api/v2/model"
 	"golang.org/x/oauth2"
 )
 
@@ -38,5 +39,21 @@ func TestOauthAuthCodeOptionsForceReauthentication(t *testing.T) {
 				t.Fatalf("prompt = %q, want %q", got, tc.wantPrompt)
 			}
 		})
+	}
+
+	feishuURL, err := buildFeishuAuthorizationURL(
+		&model.Oauth{ClientId: "cli_test"},
+		"state",
+		"https://api.example.com/api/oidc/callback",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(feishuURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query().Get("prompt"); got != "" {
+		t.Fatalf("Feishu prompt = %q, want empty", got)
 	}
 }

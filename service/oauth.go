@@ -113,6 +113,17 @@ func (os *OauthService) BeginAuth(op string, forceReauthentication bool) (error 
 		//url = "http://localhost:8888/_admin/#/oauth/" + code
 		return nil, state, verifier, nonce, url
 	}
+	oauthInfo := os.InfoByOp(op)
+	if oauthInfo.Id == 0 || oauthInfo.ClientId == "" || oauthInfo.ClientSecret == "" {
+		return errors.New("ConfigNotFound"), state, verifier, nonce, ""
+	}
+	if err := model.ValidateOauthType(oauthInfo.OauthType); err != nil {
+		return err, state, verifier, nonce, ""
+	}
+	if oauthInfo.OauthType == model.OauthTypeFeishu {
+		url, err := buildFeishuAuthorizationURL(oauthInfo, state, oauthRedirectURL(Config.Rustdesk.ApiServer))
+		return err, state, verifier, nonce, url
+	}
 	err, oauthInfo, oauthConfig, _ := os.GetOauthConfig(op)
 	if err == nil {
 		nonce = utils.RandomString(10)
@@ -351,6 +362,19 @@ func (os *OauthService) oidcCallback(oauthConfig *oauth2.Config, provider *oidc.
 
 // Callback: Get user information by code and op(Oauth provider)
 func (os *OauthService) Callback(code, verifier, op, nonce string) (err error, oauthUser *model.OauthUser) {
+	oauthInfo := os.InfoByOp(op)
+	if oauthInfo.Id == 0 || oauthInfo.ClientId == "" || oauthInfo.ClientSecret == "" {
+		return errors.New("ConfigNotFound"), nil
+	}
+	if err := model.ValidateOauthType(oauthInfo.OauthType); err != nil {
+		return err, nil
+	}
+	if oauthInfo.OauthType == model.OauthTypeFeishu {
+		if strings.TrimSpace(code) == "" {
+			return errors.New("GetOauthTokenError"), nil
+		}
+		return os.feishuCallback(oauthInfo, code)
+	}
 	err, oauthInfo, oauthConfig, provider := os.GetOauthConfig(op)
 	// oauthType is already validated in GetOauthConfig
 	if err != nil {
