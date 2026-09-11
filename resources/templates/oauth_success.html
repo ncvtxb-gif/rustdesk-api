@@ -1,82 +1,192 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OauthSuccess - RustDesk API</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>飞书授权成功 · RustDesk</title>
     <style>
+        :root {
+            --ink: #182233;
+            --muted: #667085;
+            --blue: #087df2;
+            --blue-deep: #0868d1;
+            --line: #dce8f6;
+            --surface: rgba(255, 255, 255, .94);
+            --success: #12a36d;
+            --canvas: #f4f8fc;
+        }
+        * { box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-            background-color: #f5f5f5;
             margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             min-height: 100vh;
+            display: grid;
+            place-items: center;
+            overflow: hidden;
+            color: var(--ink);
+            font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+            background:
+                radial-gradient(circle at 50% 42%, rgba(8, 125, 242, .08), transparent 32rem),
+                linear-gradient(180deg, #f9fbfe 0%, var(--canvas) 100%);
         }
-
-        .success-container {
+        .signal {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            opacity: .55;
+            background-image:
+                linear-gradient(90deg, transparent 49.9%, rgba(84, 150, 221, .08) 50%, transparent 50.1%),
+                linear-gradient(0deg, transparent 49.9%, rgba(84, 150, 221, .06) 50%, transparent 50.1%);
+            background-size: 160px 160px;
+            mask-image: radial-gradient(circle at center, black, transparent 67%);
+        }
+        .card {
+            position: relative;
+            width: min(520px, calc(100vw - 40px));
+            padding: 46px 46px 38px;
             text-align: center;
-            background: white;
-            padding: 2rem;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            max-width: 400px;
-            width: 90%;
+            background: var(--surface);
+            border: 1px solid rgba(173, 199, 226, .66);
+            border-radius: 24px;
+            box-shadow: 0 24px 70px rgba(34, 75, 117, .14), 0 3px 10px rgba(34, 75, 117, .06);
+            backdrop-filter: blur(12px);
         }
-
-        .checkmark {
-            color: #4CAF50;
-            font-size: 4rem;
-            margin-bottom: 1rem;
+        .handoff {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 28px;
         }
-
-        h1 {
-            color: #333;
-            margin-bottom: 1rem;
-        }
-
-        p {
-            color: #666;
-            line-height: 1.6;
-            margin-bottom: 1.5rem;
-        }
-
-        .return-link {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: #4CAF50;
+        .mark {
+            width: 72px;
+            height: 72px;
+            display: grid;
+            place-items: center;
+            border-radius: 22px;
             color: white;
-            text-decoration: none;
-            border-radius: 5px;
-            transition: background-color 0.3s;
+            background: var(--blue);
+            box-shadow: 0 12px 25px rgba(8, 125, 242, .25);
         }
-
-        .return-link:hover {
-            background-color: #45a049;
+        .trace {
+            position: relative;
+            width: 72px;
+            height: 2px;
+            background: var(--line);
+        }
+        .trace::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 0;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            transform: translate(50%, -50%);
+            box-shadow: 0 0 0 5px #e8f7f1;
+        }
+        .app-dot {
+            width: 50px;
+            height: 50px;
+            display: grid;
+            place-items: center;
+            border-radius: 16px;
+            color: var(--blue);
+            background: #eef6ff;
+            border: 1px solid #d9eaff;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -.06em;
+        }
+        .eyebrow {
+            margin: 0 0 12px;
+            color: var(--blue-deep);
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: .13em;
+        }
+        h1 {
+            margin: 0;
+            font-size: 30px;
+            line-height: 1.3;
+            letter-spacing: -.02em;
+        }
+        .description {
+            max-width: 360px;
+            margin: 16px auto 30px;
+            color: var(--muted);
+            font-size: 16px;
+            line-height: 1.75;
+        }
+        .close-button {
+            width: 100%;
+            height: 50px;
+            border: 0;
+            border-radius: 12px;
+            color: white;
+            background: var(--blue);
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 8px 18px rgba(8, 125, 242, .2);
+            transition: transform .16s ease, background .16s ease, box-shadow .16s ease;
+        }
+        .close-button:hover {
+            background: var(--blue-deep);
+            box-shadow: 0 10px 22px rgba(8, 105, 209, .25);
+            transform: translateY(-1px);
+        }
+        .close-button:focus-visible {
+            outline: 3px solid rgba(8, 125, 242, .25);
+            outline-offset: 3px;
+        }
+        .secure {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            margin: 20px 0 0;
+            color: #768397;
+            font-size: 13px;
+        }
+        .secure-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        @media (max-width: 560px) {
+            .card { padding: 36px 24px 30px; border-radius: 20px; }
+            h1 { font-size: 26px; }
+            .trace { width: 52px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .close-button { transition: none; }
         }
     </style>
-    <script>
-        var lang = navigator.language || navigator.userLanguage || 'zh-CN';
-        var title = 'OauthSuccess'
-        var msg = '{{.message}}'
-        var btn = 'Close'
-        document.writeln('<script src="/api/oidc/msg?lang=' + lang + '&msg=' + msg + '&title=OauthSuccess"><\/script>');
-    </script>
 </head>
 <body>
-<div class="success-container">
-    <i class="fas fa-check-circle checkmark"></i>
-    <h1 id="h1"></h1>
-<!--    <p>您已成功授权访问您的账户。</p>-->
-<!--    <p>现在可以关闭本页面或返回应用继续操作。</p>-->
-    <a href="javascript:window.close()" class="return-link">Close</a>
-</div>
-
+<div class="signal" aria-hidden="true"></div>
+<main class="card">
+    <div class="handoff" aria-hidden="true">
+        <div class="mark">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+                <path d="M10 18.5 15.5 24 27 12.5" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </div>
+        <div class="trace"></div>
+        <div class="app-dot">RD</div>
+    </div>
+    <p class="eyebrow">RUSTDESK · 飞书身份认证</p>
+    <h1>飞书授权成功</h1>
+    <p class="description">身份验证已完成，请返回 RustDesk 客户端继续使用。</p>
+    <button class="close-button" type="button" onclick="closePage()">关闭页面</button>
+    <p class="secure"><span class="secure-dot"></span><span id="secureText">已安全完成身份验证</span></p>
+</main>
 <script>
-    document.title = title + ' - RustDesk API';
-    document.getElementById('h1').innerText = title;
-    document.getElementById('msg').innerText = msg;
+    function closePage() {
+        window.close();
+        document.getElementById('secureText').textContent = '您可以手动关闭此页面';
+    }
 </script>
 </body>
 </html>
