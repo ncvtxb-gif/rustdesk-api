@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -14,6 +16,8 @@ import (
 )
 
 const feishuAuthorizeURL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
+
+const feishuHTTPTimeout = 60 * time.Second
 
 type feishuClientFactory func(appID, appSecret string, httpClient larkcore.HttpClient, openBaseURL string) *lark.Client
 
@@ -61,7 +65,7 @@ func constructFeishuScopes(scopes string) []string {
 }
 
 func (os *OauthService) feishuCallback(info *model.Oauth, code string) (error, *model.OauthUser) {
-	client := newFeishuClient(info.ClientId, info.ClientSecret, getHTTPClientWithProxy(), "")
+	client := newFeishuClient(info.ClientId, info.ClientSecret, getFeishuHTTPClient(), "")
 	ctx := context.Background()
 	tokenResp, err := client.Authen.V1.AccessToken.Create(ctx,
 		larkauthen.NewCreateAccessTokenReqBuilder().
@@ -114,6 +118,16 @@ func (os *OauthService) feishuCallback(info *model.Oauth, code string) (error, *
 		Email:     email,
 		AvatarURL: feishuString(userResp.Data.AvatarUrl),
 	}).ToOauthUser()
+}
+
+func getFeishuHTTPClient() *http.Client {
+	client := getHTTPClientWithProxy()
+	if client.Timeout > 0 {
+		return client
+	}
+	boundedClient := *client
+	boundedClient.Timeout = feishuHTTPTimeout
+	return &boundedClient
 }
 
 func feishuString(value *string) string {

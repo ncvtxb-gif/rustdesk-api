@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -96,6 +97,47 @@ func TestFeishuCallbackReturnsMappedUser(t *testing.T) {
 	}
 	if user.OpenId != "ou_123" || user.Name != "钟俊歌" || user.Username != "zhongjunge@sweetnight.com" || user.Email != "zhongjunge@sweetnight.com" || user.Picture != "https://example.invalid/avatar.png" {
 		t.Fatalf("unexpected mapped user: %#v", user)
+	}
+}
+
+func TestFeishuCallbackUsesBoundedHTTPClientWithoutProxy(t *testing.T) {
+	server := newFakeFeishuServer(t, feishuFakeResponses{
+		tokenBody:    `{"code":0,"msg":"success","data":{"access_token":"u-test-token"}}`,
+		userInfoBody: `{"code":0,"msg":"success","data":{"open_id":"ou_123","name":"钟俊歌"}}`,
+	})
+
+	previousConfig := Config
+	Config = &config.Config{}
+	t.Cleanup(func() {
+		Config = previousConfig
+	})
+
+	previousFactory := newFeishuClient
+	var timeout time.Duration
+	newFeishuClient = func(appID, appSecret string, httpClient larkcore.HttpClient, _ string) *lark.Client {
+		client, ok := httpClient.(*http.Client)
+		if !ok {
+			t.Fatalf("Feishu HTTP client type = %T, want *http.Client", httpClient)
+		}
+		timeout = client.Timeout
+		return lark.NewClient(
+			appID,
+			appSecret,
+			lark.WithHttpClient(httpClient),
+			lark.WithOpenBaseUrl(server.URL),
+			lark.WithOAuthBaseUrl(server.URL),
+		)
+	}
+	t.Cleanup(func() {
+		newFeishuClient = previousFactory
+	})
+
+	err, _ := (&OauthService{}).feishuCallback(&model.Oauth{ClientId: "cli_test", ClientSecret: "secret_test"}, "code-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeout <= 0 {
+		t.Fatalf("Feishu HTTP client timeout = %s, want a bounded timeout", timeout)
 	}
 }
 
