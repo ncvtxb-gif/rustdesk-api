@@ -15,6 +15,7 @@ const (
 	OauthTypeOidc    string = "oidc"
 	OauthTypeWebauth string = "webauth"
 	OauthTypeLinuxdo string = "linuxdo"
+	OauthTypeFeishu  string = "feishu"
 	PKCEMethodS256   string = "S256"
 	PKCEMethodPlain  string = "plain"
 )
@@ -22,7 +23,7 @@ const (
 // Validate the oauth type
 func ValidateOauthType(oauthType string) error {
 	switch oauthType {
-	case OauthTypeGithub, OauthTypeGoogle, OauthTypeOidc, OauthTypeWebauth, OauthTypeLinuxdo:
+	case OauthTypeGithub, OauthTypeGoogle, OauthTypeOidc, OauthTypeWebauth, OauthTypeLinuxdo, OauthTypeFeishu:
 		return nil
 	default:
 		return errors.New("invalid Oauth type")
@@ -67,8 +68,8 @@ func (oa *Oauth) FormatOauthInfo() error {
 	}
 	// check if the op is empty, set the default value
 	op := strings.TrimSpace(oa.Op)
-	if op == "" && oauthType == OauthTypeOidc {
-		oa.Op = OauthTypeOidc
+	if op == "" && (oauthType == OauthTypeOidc || oauthType == OauthTypeFeishu) {
+		oa.Op = oauthType
 	}
 	// check the issuer, if the oauth type is google and the issuer is empty, set the issuer to the default value
 	issuer := strings.TrimSpace(oa.Issuer)
@@ -107,6 +108,28 @@ func (ou *OauthUser) ToUser(user *User, overideUsername bool) {
 type OauthUserBase struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
+}
+
+type FeishuUser struct {
+	OpenID    string
+	Name      string
+	Email     string
+	AvatarURL string
+}
+
+func (fu *FeishuUser) ToOauthUser() *OauthUser {
+	username := strings.ToLower(strings.TrimSpace(fu.Email))
+	if username == "" {
+		username = fu.OpenID
+	}
+	return &OauthUser{
+		OpenId:        fu.OpenID,
+		Name:          fu.Name,
+		Username:      username,
+		Email:         fu.Email,
+		VerifiedEmail: fu.Email != "",
+		Picture:       fu.AvatarURL,
+	}
 }
 
 type OidcUser struct {
