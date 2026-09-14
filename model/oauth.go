@@ -118,9 +118,9 @@ type FeishuUser struct {
 }
 
 func (fu *FeishuUser) ToOauthUser() *OauthUser {
-	username := strings.ToLower(strings.TrimSpace(fu.Email))
+	username := strings.TrimSpace(fu.Name)
 	if username == "" {
-		username = fu.OpenID
+		username = "feishu-user"
 	}
 	return &OauthUser{
 		OpenId:        fu.OpenID,

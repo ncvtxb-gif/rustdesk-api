@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/lejianwen/rustdesk-api/v2/global"
 	"github.com/lejianwen/rustdesk-api/v2/http/request/admin"
@@ -10,10 +13,23 @@ import (
 	"github.com/lejianwen/rustdesk-api/v2/service"
 	"github.com/lejianwen/rustdesk-api/v2/utils"
 	"gorm.io/gorm"
-	"strconv"
 )
 
 type User struct {
+}
+
+func applyUserDisplayNames(users *model.UserList) {
+	if users == nil {
+		return
+	}
+	for _, user := range users.Users {
+		if user == nil {
+			continue
+		}
+		if nickname := strings.TrimSpace(user.Nickname); nickname != "" {
+			user.Username = nickname
+		}
+	}
 }
 
 // Detail 管理员
@@ -91,9 +107,11 @@ func (ct *User) List(c *gin.Context) {
 	}
 	res := service.AllService.UserService.List(query.Page, query.PageSize, func(tx *gorm.DB) {
 		if query.Username != "" {
-			tx.Where("username like ?", "%"+query.Username+"%")
+			keyword := "%" + query.Username + "%"
+			tx.Where("username like ? OR nickname like ?", keyword, keyword)
 		}
 	})
+	applyUserDisplayNames(res)
 	response.Success(c, res)
 }
 

@@ -15,15 +15,22 @@ func TestFeishuUserToOauthUser(t *testing.T) {
 		Email:     "zhongjunge@sweetnight.com",
 		AvatarURL: "https://example.invalid/avatar.png",
 	}).ToOauthUser()
-	if u.OpenId != "ou_123" || u.Name != "钟俊歌" || u.Username != "zhongjunge@sweetnight.com" {
+	if u.OpenId != "ou_123" || u.Name != "钟俊歌" || u.Username != "钟俊歌" {
 		t.Fatalf("unexpected mapped user: %#v", u)
 	}
 }
 
-func TestFeishuUserToOauthUserFallsBackWithoutEmail(t *testing.T) {
+func TestFeishuUserToOauthUserUsesNameWithoutEmail(t *testing.T) {
 	u := (&FeishuUser{OpenID: "ou_456", Name: "李伟铭"}).ToOauthUser()
-	if u.Username != "ou_456" || u.Email != "" {
-		t.Fatalf("unexpected fallback user: %#v", u)
+	if u.Username != "李伟铭" || u.Email != "" {
+		t.Fatalf("unexpected mapped user: %#v", u)
+	}
+}
+
+func TestFeishuUserToOauthUserNeverUsesOpenIDAsUsername(t *testing.T) {
+	u := (&FeishuUser{OpenID: "ou_789"}).ToOauthUser()
+	if u.Username == u.OpenId {
+		t.Fatalf("open_id must not be used as username: %#v", u)
 	}
 }
 

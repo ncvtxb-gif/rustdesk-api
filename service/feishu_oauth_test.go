@@ -95,7 +95,7 @@ func TestFeishuCallbackReturnsMappedUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if user.OpenId != "ou_123" || user.Name != "钟俊歌" || user.Username != "zhongjunge@sweetnight.com" || user.Email != "zhongjunge@sweetnight.com" || user.Picture != "https://example.invalid/avatar.png" {
+	if user.OpenId != "ou_123" || user.Name != "钟俊歌" || user.Username != "钟俊歌" || user.Email != "zhongjunge@sweetnight.com" || user.Picture != "https://example.invalid/avatar.png" {
 		t.Fatalf("unexpected mapped user: %#v", user)
 	}
 }
@@ -152,7 +152,7 @@ func TestFeishuCallbackFallsBackToEnterpriseEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if user.Email != "zhongjunge@sweetnight.com" || user.Username != "zhongjunge@sweetnight.com" {
+	if user.Email != "zhongjunge@sweetnight.com" || user.Username != "钟俊歌" {
 		t.Fatalf("enterprise email fallback = %#v, want mapped enterprise email", user)
 	}
 }
