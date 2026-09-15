@@ -234,6 +234,16 @@ func (ct *Login) OidcAuthQuery(c *gin.Context) {
 }
 
 func responseLoginSuccess(c *gin.Context, u *model.User, token string) {
+	if u == nil || u.IsAdmin == nil || !*u.IsAdmin {
+		// The OAuth flow creates a token before this admin-portal boundary is
+		// reached. Revoke it immediately so a rejected ordinary user cannot use
+		// the token against authenticated admin endpoints.
+		if token != "" {
+			service.DB.Where("token = ?", token).Delete(&model.UserToken{})
+		}
+		response.Fail(c, 403, "仅管理员可以登录管理后台")
+		return
+	}
 	lp := &adResp.LoginPayload{}
 	lp.FromUser(u)
 	lp.Token = token
