@@ -247,3 +247,63 @@ func TestManagedIdentityLoginAddsAllocatedDeviceToCompanyAddressBook(t *testing.
 		t.Fatalf("managed login did not add allocated ID to company address book: %v", err)
 	}
 }
+
+func TestBackfillCompanyAddressBookAddsExistingPeersWithFeishuNickname(t *testing.T) {
+	db := setupCompanyAddressBookTestDB(t)
+	admin := &model.User{Username: "admin", Nickname: "Administrator", IsAdmin: testBool(true)}
+	first := &model.User{Username: "ou_first", Nickname: "钟俊歌", IsAdmin: testBool(false)}
+	second := &model.User{Username: "ou_second", Nickname: "李伟铭", IsAdmin: testBool(false)}
+	db.Create(admin)
+	db.Create(first)
+	db.Create(second)
+	db.Create(&model.Peer{Id: "111111111", UserId: first.Id, Hostname: "PC-1", Os: "windows"})
+	db.Create(&model.Peer{Id: "222222222", UserId: second.Id, Hostname: "PC-2", Os: "windows"})
+
+	svc := &AddressBookService{}
+	if err := svc.BackfillCompanyAddressBook(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.BackfillCompanyAddressBook(); err != nil {
+		t.Fatalf("idempotent rerun failed: %v", err)
+	}
+
+	var collection model.AddressBookCollection
+	if err := db.Where("name = ?", CompanyAddressBookName).First(&collection).Error; err != nil {
+		t.Fatal(err)
+	}
+	if collection.UserId != admin.Id {
+		t.Fatalf("collection owner=%d; want administrator %d", collection.UserId, admin.Id)
+	}
+	var entries []model.AddressBook
+	if err := db.Where("collection_id = ?", collection.Id).Order("id").Find(&entries).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("company entries=%d; want 2", len(entries))
+	}
+	if entries[0].Username != "钟俊歌" || entries[1].Username != "李伟铭" {
+		t.Fatalf("unexpected display names: %+v", entries)
+	}
+}
+
+func TestBackfillCompanyAddressBookRemovesLegacyOrdinaryUserRules(t *testing.T) {
+	db := setupCompanyAddressBookTestDB(t)
+	admin := &model.User{Username: "admin", IsAdmin: testBool(true)}
+	ordinary := &model.User{Username: "ou_user", IsAdmin: testBool(false)}
+	db.Create(admin)
+	db.Create(ordinary)
+	collection := &model.AddressBookCollection{UserId: admin.Id, Name: CompanyAddressBookName}
+	db.Create(collection)
+	db.Create(&model.AddressBookCollectionRule{UserId: admin.Id, CollectionId: collection.Id, ToId: ordinary.Id, Type: model.ShareAddressBookRuleTypePersonal, Rule: model.ShareAddressBookRuleRuleRead})
+
+	if err := (&AddressBookService{}).BackfillCompanyAddressBook(); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err := db.Model(&model.AddressBookCollectionRule{}).Where("collection_id = ?", collection.Id).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("legacy company address-book rules remain: %d", count)
+	}
+}

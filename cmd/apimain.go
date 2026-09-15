@@ -290,6 +290,10 @@ func DatabaseAutoUpdate() {
 		}
 	}
 
+	if err := (&service.AddressBookService{}).BackfillCompanyAddressBook(); err != nil {
+		panic(fmt.Sprintf("company address book backfill failed: %v", err))
+	}
+
 }
 func Migrate(version uint) error {
 	global.Logger.Info("Migrating....", version)

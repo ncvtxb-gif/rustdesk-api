@@ -239,6 +239,76 @@ func (s *AddressBookService) EnsureCompanyDevice(user *model.User, deviceId stri
 		}).Create(&entry).Error
 	})
 }
+
+// BackfillCompanyAddressBook reconciles all existing peers into the single
+// administrator-owned company collection. It is safe to run repeatedly.
+func (s *AddressBookService) BackfillCompanyAddressBook() error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var collections []*model.AddressBookCollection
+		if err := tx.Where("name = ?", CompanyAddressBookName).Find(&collections).Error; err != nil {
+			return err
+		}
+		if len(collections) > 1 {
+			return errors.New("exactly one company address book collection is required")
+		}
+
+		var collection *model.AddressBookCollection
+		if len(collections) == 1 {
+			collection = collections[0]
+		} else {
+			var admin model.User
+			if err := tx.Where("is_admin = ?", true).Order("id").First(&admin).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil
+				}
+				return err
+			}
+			collection = &model.AddressBookCollection{UserId: admin.Id, Name: CompanyAddressBookName}
+			if err := tx.Create(collection).Error; err != nil {
+				return err
+			}
+		}
+
+		// Access is synthesized for administrators. Persisted legacy rules could
+		// otherwise disclose this global collection to ordinary users.
+		if err := tx.Where("collection_id = ?", collection.Id).Delete(&model.AddressBookCollectionRule{}).Error; err != nil {
+			return err
+		}
+
+		var peers []*model.Peer
+		if err := tx.Preload("User").Where("id <> ?", "").Find(&peers).Error; err != nil {
+			return err
+		}
+		for _, peer := range peers {
+			displayName := ""
+			if peer.User != nil {
+				displayName = strings.TrimSpace(peer.User.Nickname)
+				if displayName == "" {
+					displayName = peer.User.Username
+				}
+			}
+			entry := &model.AddressBook{
+				Id:           peer.Id,
+				UserId:       collection.UserId,
+				CollectionId: collection.Id,
+				Username:     displayName,
+				Hostname:     peer.Hostname,
+				Platform:     peer.Os,
+			}
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "user_id"}, {Name: "collection_id"}, {Name: "id"}},
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"username": displayName,
+					"hostname": peer.Hostname,
+					"platform": peer.Os,
+				}),
+			}).Create(entry).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
 func (s *AddressBookService) ListCollection(page, pageSize uint, where func(tx *gorm.DB)) (res *model.AddressBookCollectionList) {
 	res = &model.AddressBookCollectionList{}
 	res.Page = int64(page)
