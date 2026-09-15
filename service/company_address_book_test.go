@@ -33,7 +33,7 @@ func setupCompanyAddressBookTestDB(t *testing.T) *gorm.DB {
 
 func testBool(value bool) *bool { return &value }
 
-func TestEnsureCompanyDeviceCreatesPersonalEntryAndReadRule(t *testing.T) {
+func TestEnsureCompanyDeviceCreatesEntryWithoutGrantingNormalUserAccess(t *testing.T) {
 	db := setupCompanyAddressBookTestDB(t)
 	owner := &model.User{Username: "owner", IsAdmin: testBool(true)}
 	user := &model.User{Username: "feishu-user", Nickname: "Feishu Display Name", IsAdmin: testBool(false)}
@@ -59,12 +59,14 @@ func TestEnsureCompanyDeviceCreatesPersonalEntryAndReadRule(t *testing.T) {
 	if entry.UserId != owner.Id || entry.Username != "Feishu Display Name" {
 		t.Fatalf("unexpected company entry: %+v", entry)
 	}
-	var rule model.AddressBookCollectionRule
-	if err := db.Where("collection_id = ? AND to_id = ?", collection.Id, user.Id).First(&rule).Error; err != nil {
+	var ruleCount int64
+	if err := db.Model(&model.AddressBookCollectionRule{}).
+		Where("collection_id = ? AND to_id = ?", collection.Id, user.Id).
+		Count(&ruleCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if rule.Rule != model.ShareAddressBookRuleRuleRead || rule.Type != model.ShareAddressBookRuleTypePersonal {
-		t.Fatalf("unexpected company rule: %+v", rule)
+	if ruleCount != 0 {
+		t.Fatalf("normal user received %d company address-book rules; want 0", ruleCount)
 	}
 }
 
@@ -120,7 +122,7 @@ func TestEnsureCompanyDeviceRefreshesPeerMetadataAfterBootstrap(t *testing.T) {
 	}
 }
 
-func TestCompanyCollectionVisibilitySeparatesNormalUsers(t *testing.T) {
+func TestCompanyCollectionIsInvisibleToNormalUsers(t *testing.T) {
 	db := setupCompanyAddressBookTestDB(t)
 	owner := &model.User{Username: "owner", IsAdmin: testBool(true)}
 	first := &model.User{Username: "first", IsAdmin: testBool(false)}
@@ -135,17 +137,21 @@ func TestCompanyCollectionVisibilitySeparatesNormalUsers(t *testing.T) {
 	db.Create(&model.AddressBook{Id: "111111111", UserId: owner.Id, CollectionId: collection.Id})
 	db.Create(&model.AddressBook{Id: "222222222", UserId: owner.Id, CollectionId: collection.Id})
 
-	list := (&AddressBookService{}).ListVisibleByUserAndCollection(first, owner.Id, collection.Id, 1, 1000)
-	if list.Total != 1 || len(list.AddressBooks) != 1 || list.AddressBooks[0].Id != "111111111" {
-		t.Fatalf("normal user saw another user's device: %+v", list.AddressBooks)
+	svc := &AddressBookService{}
+	list := svc.ListVisibleByUserAndCollection(first, owner.Id, collection.Id, 1, 1000)
+	if list.Total != 0 || len(list.AddressBooks) != 0 {
+		t.Fatalf("normal user saw company devices: %+v", list.AddressBooks)
 	}
-	adminList := (&AddressBookService{}).ListVisibleByUserAndCollection(owner, owner.Id, collection.Id, 1, 1000)
+	if svc.CheckUserReadPrivilege(first, owner.Id, collection.Id) {
+		t.Fatal("normal user received read access to company address book")
+	}
+	adminList := svc.ListVisibleByUserAndCollection(owner, owner.Id, collection.Id, 1, 1000)
 	if adminList.Total != 2 || len(adminList.AddressBooks) != 2 {
 		t.Fatalf("administrator did not see all devices: %+v", adminList.AddressBooks)
 	}
 }
 
-func TestCompanyCollectionIsReadOnlyForNormalUsers(t *testing.T) {
+func TestCompanyCollectionLegacyRuleCannotGrantNormalUserAccess(t *testing.T) {
 	db := setupCompanyAddressBookTestDB(t)
 	owner := &model.User{Username: "owner", IsAdmin: testBool(true)}
 	user := &model.User{Username: "user", IsAdmin: testBool(false)}
@@ -154,8 +160,14 @@ func TestCompanyCollectionIsReadOnlyForNormalUsers(t *testing.T) {
 	collection := &model.AddressBookCollection{UserId: owner.Id, Name: CompanyAddressBookName}
 	db.Create(collection)
 	db.Create(&model.AddressBookCollectionRule{UserId: owner.Id, CollectionId: collection.Id, ToId: user.Id, Type: model.ShareAddressBookRuleTypePersonal, Rule: model.ShareAddressBookRuleRuleFullControl})
-	if got := (&AddressBookService{}).UserMaxRule(user, owner.Id, collection.Id); got != model.ShareAddressBookRuleRuleRead {
-		t.Fatalf("normal user retained write access to company collection: %d", got)
+	svc := &AddressBookService{}
+	if got := svc.UserMaxRule(user, owner.Id, collection.Id); got != 0 {
+		t.Fatalf("normal user retained company collection access: %d", got)
+	}
+	for _, rule := range svc.CollectionReadRules(user) {
+		if rule.CollectionId == collection.Id {
+			t.Fatalf("normal user discovered company collection through legacy rule: %+v", rule)
+		}
 	}
 }
 

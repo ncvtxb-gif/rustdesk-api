@@ -190,18 +190,18 @@ func (s *AddressBookService) ListByUserIdAndCollectionId(userId, cid, page, page
 	return
 }
 
-// ListVisibleByUserAndCollection keeps the managed company collection useful
-// to administrators while limiting normal users to devices currently bound to
-// their own account.
+// ListVisibleByUserAndCollection exposes the managed company collection only
+// to administrators. Authorization is enforced here as a second boundary in
+// addition to the HTTP privilege checks.
 func (s *AddressBookService) ListVisibleByUserAndCollection(viewer *model.User, ownerId, cid, page, pageSize uint) *model.AddressBookList {
 	collection := s.CollectionInfoById(cid)
-	if collection.Id == 0 || collection.Name != CompanyAddressBookName || viewer == nil || (viewer.IsAdmin != nil && *viewer.IsAdmin) {
+	if collection.Id == 0 || collection.Name != CompanyAddressBookName {
 		return s.ListByUserIdAndCollectionId(ownerId, cid, page, pageSize)
 	}
-	return s.List(page, pageSize, func(tx *gorm.DB) {
-		tx.Joins("JOIN peers ON peers.id = address_books.id").
-			Where("address_books.user_id = ? AND address_books.collection_id = ? AND peers.user_id = ?", ownerId, cid, viewer.Id)
-	})
+	if viewer != nil && viewer.IsAdmin != nil && *viewer.IsAdmin {
+		return s.ListByUserIdAndCollectionId(ownerId, cid, page, pageSize)
+	}
+	return &model.AddressBookList{Pagination: model.Pagination{Page: int64(page), PageSize: int64(pageSize)}}
 }
 
 // EnsureCompanyDevice adds or refreshes the device allocated during desktop
@@ -219,20 +219,7 @@ func (s *AddressBookService) EnsureCompanyDevice(user *model.User, deviceId stri
 		return errors.New("exactly one company address book collection is required")
 	}
 	collection := collections[0]
-	ruleLevel := model.ShareAddressBookRuleRuleRead
-	if user.IsAdmin != nil && *user.IsAdmin {
-		ruleLevel = model.ShareAddressBookRuleRuleFullControl
-	}
-
 	return DB.Transaction(func(tx *gorm.DB) error {
-		rule := model.AddressBookCollectionRule{UserId: collection.UserId, CollectionId: collection.Id, Rule: ruleLevel, Type: model.ShareAddressBookRuleTypePersonal, ToId: user.Id}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "type"}, {Name: "to_id"}, {Name: "collection_id"}},
-			DoUpdates: clause.Assignments(map[string]interface{}{"rule": ruleLevel, "user_id": collection.UserId}),
-		}).Create(&rule).Error; err != nil {
-			return err
-		}
-
 		displayName := strings.TrimSpace(user.Nickname)
 		if displayName == "" {
 			displayName = user.Username
@@ -283,6 +270,9 @@ func (s *AddressBookService) CollectionInfoById(id uint) *model.AddressBookColle
 }
 
 func (s *AddressBookService) CollectionReadRules(user *model.User) (res []*model.AddressBookCollectionRule) {
+	if user == nil {
+		return nil
+	}
 	// personalRules
 	var personalRules []*model.AddressBookCollectionRule
 	tx2 := DB.Model(&model.AddressBookCollectionRule{})
@@ -300,8 +290,22 @@ func (s *AddressBookService) CollectionReadRules(user *model.User) (res []*model
 		for _, collection := range companyCollections {
 			res = append(res, &model.AddressBookCollectionRule{UserId: collection.UserId, CollectionId: collection.Id, Rule: model.ShareAddressBookRuleRuleFullControl})
 		}
+		return res
 	}
-	return
+
+	var companyCollections []*model.AddressBookCollection
+	DB.Where("name = ?", CompanyAddressBookName).Find(&companyCollections)
+	companyCollectionIDs := make(map[uint]struct{}, len(companyCollections))
+	for _, collection := range companyCollections {
+		companyCollectionIDs[collection.Id] = struct{}{}
+	}
+	filtered := res[:0]
+	for _, rule := range res {
+		if _, isCompanyCollection := companyCollectionIDs[rule.CollectionId]; !isCompanyCollection {
+			filtered = append(filtered, rule)
+		}
+	}
+	return filtered
 }
 
 func (s *AddressBookService) UserMaxRule(user *model.User, uid, cid uint) int {
@@ -310,7 +314,7 @@ func (s *AddressBookService) UserMaxRule(user *model.User, uid, cid uint) int {
 		if user.IsAdmin != nil && *user.IsAdmin {
 			return model.ShareAddressBookRuleRuleFullControl
 		}
-		return model.ShareAddressBookRuleRuleRead
+		return 0
 	}
 	// ismy?
 	if user.Id == uid {
