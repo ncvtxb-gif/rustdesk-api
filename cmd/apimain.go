@@ -24,7 +24,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const DatabaseVersion = 269
+const DatabaseVersion = 270
 
 // @title 管理系统API
 // @version 1.0
@@ -369,6 +369,11 @@ func Migrate(version uint) error {
 func migrateSchemaAndRecordVersion(db *gorm.DB, version uint, models ...interface{}) error {
 	if err := db.AutoMigrate(models...); err != nil {
 		return err
+	}
+	if db.Migrator().HasTable(&model.User{}) && db.Dialector.Name() == "sqlite" {
+		if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_normalized_unique ON users(LOWER(TRIM(email))) WHERE TRIM(email) <> ''").Error; err != nil {
+			return err
+		}
 	}
 	if err := backfillManagedUserTokens(db, global.Config.DeviceIdentity.EnterpriseClientType); err != nil {
 		return err

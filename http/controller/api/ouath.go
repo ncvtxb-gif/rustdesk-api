@@ -280,9 +280,17 @@ func (o *Oauth) OauthCallback(c *gin.Context) {
 			})
 			return
 		}
+		oauthConfig := oauthService.InfoByOp(op)
 		user = service.AllService.UserService.InfoByOauthId(op, openid)
-		if user == nil {
-			oauthConfig := oauthService.InfoByOp(op)
+		if oauthConfig.OauthType == model.OauthTypeFeishu && oauthConfig.AutoRegister != nil && *oauthConfig.AutoRegister {
+			err, user = service.AllService.UserService.RegisterByOauth(oauthUser, op)
+			if err != nil {
+				c.HTML(http.StatusOK, "oauth_fail.html", gin.H{
+					"message": err.Error(),
+				})
+				return
+			}
+		} else if user == nil {
 			if !*oauthConfig.AutoRegister {
 				//c.String(http.StatusInternalServerError, "还未绑定用户，请先绑定")
 				oauthCache.UpdateFromOauthUser(oauthUser)

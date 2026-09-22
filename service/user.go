@@ -33,7 +33,7 @@ func (us *UserService) InfoByUsername(un string) *model.User {
 // InfoByEmail 根据邮箱取用户信息
 func (us *UserService) InfoByEmail(email string) *model.User {
 	u := &model.User{}
-	DB.Where("email = ?", email).First(u)
+	DB.Where("LOWER(TRIM(email)) = ?", normalizeOauthEmail(email)).First(u)
 	return u
 }
 
@@ -332,21 +332,22 @@ func (us *UserService) InfoByOauthId(op string, openId string) *model.User {
 func (us *UserService) RegisterByOauth(oauthUser *model.OauthUser, op string) (error, *model.User) {
 	Lock.Lock("registerByOauth")
 	defer Lock.UnLock("registerByOauth")
-	ut := AllService.OauthService.UserThirdInfo(op, oauthUser.OpenId)
-	if ut.Id != 0 {
-		return nil, us.InfoById(ut.UserId)
-	}
 	err, oauthType := AllService.OauthService.GetTypeByOp(op)
 	if err != nil {
 		return err, nil
 	}
+	email := normalizeOauthEmail(oauthUser.Email)
+	if oauthType == model.OauthTypeFeishu && email == "" {
+		return errors.New("FeishuEmailRequired"), nil
+	}
+	oauthUser.Email = email
+	ut := AllService.OauthService.UserThirdInfo(op, oauthUser.OpenId)
+	if ut.Id != 0 && oauthType != model.OauthTypeFeishu {
+		return nil, us.InfoById(ut.UserId)
+	}
 	//check if this email has been registered
-	email := oauthUser.Email
 	// only email is not empty
 	if email != "" {
-		email = strings.ToLower(email)
-		// update email to oauthUser, in case it contain upper case
-		oauthUser.Email = email
 		// call this, if find user by email, it will update the email to local database
 		user, ldapErr := AllService.LdapService.GetUserInfoByEmailLocal(email)
 		// If we enable ldap, and the error is not ErrLdapUserNotFound, return the error because we could not sure if the user is not found in ldap
@@ -359,9 +360,43 @@ func (us *UserService) RegisterByOauth(oauthUser *model.OauthUser, op string) (e
 		}
 		if user.Id != 0 {
 			ut.FromOauthUser(user.Id, oauthUser, oauthType, op)
-			DB.Create(ut)
+			if err := DB.Transaction(func(tx *gorm.DB) error {
+				if ut.Id == 0 {
+					if err := tx.Create(ut).Error; err != nil {
+						return err
+					}
+				} else if err := tx.Save(ut).Error; err != nil {
+					return err
+				}
+				if oauthType == model.OauthTypeFeishu {
+					oauthUser.ToUser(user, false)
+					return tx.Model(user).Select("email", "nickname", "avatar").Updates(user).Error
+				}
+				return nil
+			}); err != nil {
+				return err, nil
+			}
 			return nil, user
 		}
+	}
+	if ut.Id != 0 {
+		user := us.InfoById(ut.UserId)
+		if user.Id == 0 {
+			return errors.New("ItemNotFound"), nil
+		}
+		if oauthType == model.OauthTypeFeishu {
+			ut.FromOauthUser(user.Id, oauthUser, oauthType, op)
+			if err := DB.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Save(ut).Error; err != nil {
+					return err
+				}
+				oauthUser.ToUser(user, false)
+				return tx.Model(user).Select("email", "nickname", "avatar").Updates(user).Error
+			}); err != nil {
+				return err, nil
+			}
+		}
+		return nil, user
 	}
 
 	tx := DB.Begin()
@@ -384,6 +419,10 @@ func (us *UserService) RegisterByOauth(oauthUser *model.OauthUser, op string) (e
 	tx.Create(ut)
 	tx.Commit()
 	return nil, user
+}
+
+func normalizeOauthEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 // GenerateUsernameByOauth 生成用户名

@@ -17,6 +17,8 @@ import (
 
 const feishuAuthorizeURL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
 
+const feishuEmailScope = "contact:user.email:readonly"
+
 const feishuHTTPTimeout = 60 * time.Second
 
 type feishuClientFactory func(appID, appSecret string, httpClient larkcore.HttpClient, openBaseURL string) *lark.Client
@@ -50,16 +52,20 @@ func buildFeishuAuthorizationURL(info *model.Oauth, state, redirectURL string) (
 }
 
 func constructFeishuScopes(scopes string) []string {
-	if strings.TrimSpace(scopes) == "" {
-		return []string{}
-	}
-
 	values := strings.Split(scopes, ",")
-	result := make([]string, 0, len(values))
+	result := make([]string, 0, len(values)+1)
+	seen := make(map[string]struct{}, len(values)+1)
 	for _, scope := range values {
 		if scope = strings.TrimSpace(scope); scope != "" {
+			if _, exists := seen[scope]; exists {
+				continue
+			}
+			seen[scope] = struct{}{}
 			result = append(result, scope)
 		}
+	}
+	if _, exists := seen[feishuEmailScope]; !exists {
+		result = append(result, feishuEmailScope)
 	}
 	return result
 }
@@ -110,6 +116,11 @@ func (os *OauthService) feishuCallback(info *model.Oauth, code string) (error, *
 	email := feishuString(userResp.Data.Email)
 	if email == "" {
 		email = feishuString(userResp.Data.EnterpriseEmail)
+	}
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		logFeishuOAuthFailure("FeishuEmailRequired", userResp.Code, userResp.RequestId())
+		return errors.New("FeishuEmailRequired"), nil
 	}
 
 	return nil, (&model.FeishuUser{

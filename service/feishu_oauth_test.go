@@ -34,8 +34,8 @@ func TestBuildFeishuAuthorizationURL(t *testing.T) {
 	if q.Get("app_id") != "cli_test" || q.Get("state") != "state-123" || q.Get("redirect_uri") != "https://api.example.com/api/oidc/callback" {
 		t.Fatalf("unexpected query: %v", q)
 	}
-	if q.Get("scope") != "contact:user.base:readonly" {
-		t.Fatalf("scope = %q, want configured Feishu scope", q.Get("scope"))
+	if q.Get("scope") != "contact:user.base:readonly contact:user.email:readonly" {
+		t.Fatalf("scope = %q, want configured scopes plus required email scope", q.Get("scope"))
 	}
 }
 
@@ -55,10 +55,11 @@ func TestBuildFeishuAuthorizationURLScopesAreFeishuSpecific(t *testing.T) {
 		{
 			name:   "trims comma separated configured scopes",
 			scopes: " contact:user.base:readonly , contact:contact.base:readonly ",
-			want:   "contact:user.base:readonly contact:contact.base:readonly",
+			want:   "contact:user.base:readonly contact:contact.base:readonly contact:user.email:readonly",
 		},
 		{
-			name: "does not inherit OIDC defaults when scopes are empty",
+			name: "requests required email scope when configured scopes are empty",
+			want: "contact:user.email:readonly",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -103,7 +104,7 @@ func TestFeishuCallbackReturnsMappedUser(t *testing.T) {
 func TestFeishuCallbackUsesBoundedHTTPClientWithoutProxy(t *testing.T) {
 	server := newFakeFeishuServer(t, feishuFakeResponses{
 		tokenBody:    `{"code":0,"msg":"success","data":{"access_token":"u-test-token"}}`,
-		userInfoBody: `{"code":0,"msg":"success","data":{"open_id":"ou_123","name":"钟俊歌"}}`,
+		userInfoBody: `{"code":0,"msg":"success","data":{"open_id":"ou_123","name":"钟俊歌","email":"zhongjunge@sweetnight.com"}}`,
 	})
 
 	previousConfig := Config
@@ -154,6 +155,19 @@ func TestFeishuCallbackFallsBackToEnterpriseEmail(t *testing.T) {
 	}
 	if user.Email != "zhongjunge@sweetnight.com" || user.Username != "钟俊歌" {
 		t.Fatalf("enterprise email fallback = %#v, want mapped enterprise email", user)
+	}
+}
+
+func TestFeishuCallbackRejectsMissingEmail(t *testing.T) {
+	server := newFakeFeishuServer(t, feishuFakeResponses{
+		tokenBody:    `{"code":0,"msg":"success","data":{"access_token":"u-test-token"}}`,
+		userInfoBody: `{"code":0,"msg":"success","data":{"open_id":"ou_123","name":"钟俊歌"}}`,
+	})
+	useFakeFeishuClient(t, server.URL)
+
+	err, user := (&OauthService{}).feishuCallback(&model.Oauth{ClientId: "cli_test", ClientSecret: "secret_test"}, "code-123")
+	if err == nil || err.Error() != "FeishuEmailRequired" || user != nil {
+		t.Fatalf("callback = (%v, %#v), want (FeishuEmailRequired, nil)", err, user)
 	}
 }
 

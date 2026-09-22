@@ -12,6 +12,12 @@ type invalidMigrationModel struct {
 	Broken chan int
 }
 
+func TestDatabaseVersionIncludesEmailUniquenessMigration(t *testing.T) {
+	if DatabaseVersion < 270 {
+		t.Fatalf("DatabaseVersion = %d, want at least 270", DatabaseVersion)
+	}
+}
+
 func TestMigrationFailureDoesNotRecordVersion(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
@@ -44,6 +50,28 @@ func TestMigrationCreatesCompanyAddressBookUniqueIndexes(t *testing.T) {
 	}
 	if !db.Migrator().HasIndex(&model.AddressBookCollectionRule{}, "idx_address_book_rule_identity") {
 		t.Fatal("address-book rule identity unique index was not created")
+	}
+}
+
+func TestMigrationCreatesNormalizedNonEmptyEmailUniqueIndex(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateSchemaAndRecordVersion(db, 270, &model.Version{}, &model.User{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.User{Username: "blank-one", Email: ""}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.User{Username: "blank-two", Email: ""}).Error; err != nil {
+		t.Fatalf("empty emails must remain allowed: %v", err)
+	}
+	if err := db.Create(&model.User{Username: "first", Email: "user@sweetnight.com"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.User{Username: "second", Email: " USER@SWEETNIGHT.COM "}).Error; err == nil {
+		t.Fatal("normalized duplicate email was accepted")
 	}
 }
 
