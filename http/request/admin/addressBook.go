@@ -81,12 +81,14 @@ func (a AddressBookForm) ToAddressBooks() []*model.AddressBook {
 }
 
 type AddressBookQuery struct {
-	UserId       int    `form:"user_id"`
-	CollectionId *int   `form:"collection_id"`
-	IsMy         int    `form:"is_my"`
-	Username     string `form:"username"`
-	Hostname     string `form:"hostname"`
-	Id           string `form:"id"`
+	UserId          int    `form:"user_id"`
+	CollectionId    *int   `form:"collection_id"`
+	IsMy            int    `form:"is_my"`
+	Username        string `form:"username"`
+	Hostname        string `form:"hostname"`
+	UserDisplayName string `form:"user_display_name"`
+	SystemUsername  string `form:"system_username"`
+	Id              string `form:"id"`
 	PageQuery
 }
 

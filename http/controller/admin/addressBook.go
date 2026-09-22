@@ -7,6 +7,7 @@ import (
 	"github.com/lejianwen/rustdesk-api/v2/global"
 	"github.com/lejianwen/rustdesk-api/v2/http/request/admin"
 	"github.com/lejianwen/rustdesk-api/v2/http/response"
+	"github.com/lejianwen/rustdesk-api/v2/model"
 	"github.com/lejianwen/rustdesk-api/v2/service"
 	"gorm.io/gorm"
 	"strconv"
@@ -184,10 +185,26 @@ func (ct *AddressBook) List(c *gin.Context) {
 		if query.Hostname != "" {
 			tx.Where("hostname like ?", "%"+query.Hostname+"%")
 		}
+		if query.UserDisplayName != "" {
+			keyword := "%" + query.UserDisplayName + "%"
+			peerIDs := service.DB.Model(&model.Peer{}).
+				Select("peers.id").
+				Joins("JOIN users ON users.id = peers.user_id").
+				Where("users.nickname like ? OR users.username like ?", keyword, keyword)
+			tx.Where("id IN (?)", peerIDs)
+		}
+		if query.SystemUsername != "" {
+			peerIDs := service.DB.Model(&model.Peer{}).Select("id").Where("username like ?", "%"+query.SystemUsername+"%")
+			tx.Where("id IN (?)", peerIDs)
+		}
 		if query.CollectionId != nil && *query.CollectionId >= 0 {
 			tx.Where("collection_id = ?", query.CollectionId)
 		}
 	})
+	if err := service.AllService.AddressBookService.PopulateDisplayFields(res.AddressBooks); err != nil {
+		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+		return
+	}
 
 	abCIds := make([]uint, 0)
 	for _, ab := range res.AddressBooks {

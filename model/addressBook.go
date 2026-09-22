@@ -37,6 +37,8 @@ type AddressBook struct {
 	SameServer       bool                   `json:"sameServer" gorm:"default:0;not null;"`
 	CollectionId     uint                   `json:"collection_id" gorm:"default:0;not null;index;uniqueIndex:idx_address_book_identity,priority:2"`
 	Collection       *AddressBookCollection `json:"collection,omitempty"`
+	UserDisplayName  string                 `json:"user_display_name" gorm:"-"`
+	SystemUsername   string                 `json:"system_username" gorm:"-"`
 	TimeModel
 }
 

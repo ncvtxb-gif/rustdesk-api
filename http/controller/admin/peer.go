@@ -5,6 +5,7 @@ import (
 	"github.com/lejianwen/rustdesk-api/v2/global"
 	"github.com/lejianwen/rustdesk-api/v2/http/request/admin"
 	"github.com/lejianwen/rustdesk-api/v2/http/response"
+	"github.com/lejianwen/rustdesk-api/v2/model"
 	"github.com/lejianwen/rustdesk-api/v2/service"
 	"gorm.io/gorm"
 	"strconv"
@@ -111,6 +112,14 @@ func (ct *Peer) List(c *gin.Context) {
 		if query.Username != "" {
 			tx.Where("username like ?", "%"+query.Username+"%")
 		}
+		if query.UserDisplayName != "" {
+			keyword := "%" + query.UserDisplayName + "%"
+			userIDs := service.DB.Model(&model.User{}).Select("id").Where("nickname like ? OR username like ?", keyword, keyword)
+			tx.Where("user_id IN (?)", userIDs)
+		}
+		if query.SystemUsername != "" {
+			tx.Where("username like ?", "%"+query.SystemUsername+"%")
+		}
 		if query.Ip != "" {
 			tx.Where("last_online_ip like ?", "%"+query.Ip+"%")
 		}
@@ -118,6 +127,10 @@ func (ct *Peer) List(c *gin.Context) {
 			tx.Where("alias like ?", "%"+query.Alias+"%")
 		}
 	})
+	if err := service.AllService.PeerService.PopulateDisplayFields(res.Peers); err != nil {
+		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+		return
+	}
 	response.Success(c, res)
 }
 
